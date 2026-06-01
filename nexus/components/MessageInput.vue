@@ -700,6 +700,11 @@ defineExpose({ textareaRef, text, focus: () => textareaRef.value?.focus() });
 
 .input-row:focus-within {
   border-color: var(--color-accent);
+  box-shadow: inset 0 1px 4px rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="dark"] .input-row:focus-within {
+  box-shadow: inset 0 1px 4px rgba(0, 0, 0, 0.15);
 }
 
 .input-action-btn {

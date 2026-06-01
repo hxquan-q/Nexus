@@ -183,7 +183,7 @@ defineExpose({ toggle, close, isOpen });
   border: none;
   background: transparent;
   color: var(--color-text-primary);
-  font-size: var(--font-size-sm);
+  font-size: 13px;
   font-weight: 500;
   cursor: pointer;
   border-radius: var(--radius-sm);

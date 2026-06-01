@@ -414,7 +414,7 @@ const isUser = computed(() => props.message.role === 'user');
 
 .message-bubble {
   max-width: 100%;
-  padding: var(--spacing-sm) var(--spacing-md);
+  padding: 10px 16px;
   border-radius: var(--radius-lg);
   font-size: var(--font-size-md);
   line-height: var(--line-height-normal);
@@ -424,9 +424,9 @@ const isUser = computed(() => props.message.role === 'user');
 
 .bubble-user {
   background: var(--color-bg-user-bubble);
-  color: var(--color-text-user-bubble);
-  border-radius: var(--radius-lg);
-  border-bottom-right-radius: var(--radius-xs);
+  color: #ffffff;
+  border-radius: 18px 18px 4px 18px;
+  padding: 10px 16px;
 }
 
 .bubble-assistant {
@@ -438,7 +438,9 @@ const isUser = computed(() => props.message.role === 'user');
 
 .bubble-error {
   background: var(--color-error-bg);
-  border: 1px solid var(--color-error-border);
+  border: none;
+  border-left: 3px solid var(--color-error);
+  border-radius: var(--radius-sm);
 }
 
 .bubble-streaming {
@@ -733,53 +735,54 @@ const isUser = computed(() => props.message.role === 'user');
 }
 
 .error-action-btn {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: var(--spacing-xs) var(--spacing-sm);
-  border: 1px solid var(--color-error);
+  padding: 0;
+  border: none;
   background: transparent;
   color: var(--color-error);
   font-size: var(--font-size-xs);
   font-weight: 500;
   cursor: pointer;
-  border-radius: var(--radius-sm);
-  transition: all var(--transition-fast);
+  border-radius: 0;
+  transition: opacity var(--transition-fast);
   font-family: var(--font-body);
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .error-action-btn:hover {
-  background: var(--color-error);
-  color: white;
+  opacity: 0.75;
 }
 
 .error-action-btn.copy-error {
-  border-color: var(--color-border);
   color: var(--color-text-secondary);
+  text-decoration: none;
 }
 
 .error-action-btn.copy-error:hover {
-  background: var(--color-bg-secondary);
-  border-color: var(--color-border);
   color: var(--color-text-primary);
+  opacity: 0.75;
 }
 
 .retry-btn {
   align-self: flex-start;
-  padding: var(--spacing-xs) var(--spacing-sm);
-  border: 1px solid var(--color-error);
+  padding: 0;
+  border: none;
   background: transparent;
   color: var(--color-error);
   font-size: var(--font-size-xs);
   font-weight: 500;
   cursor: pointer;
-  border-radius: var(--radius-sm);
-  transition: all var(--transition-fast);
+  border-radius: 0;
+  transition: opacity var(--transition-fast);
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .retry-btn:hover {
-  background: var(--color-error);
-  color: white;
+  opacity: 0.75;
 }
 
 /* Streaming cursor */

@@ -2502,13 +2502,13 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--spacing-sm) var(--spacing-md);
+  padding: 6px var(--spacing-md);
   border-bottom: 1px solid var(--color-border);
   background: var(--color-bg-primary);
   position: sticky;
   top: 0;
   z-index: 10;
-  min-height: 48px;
+  height: 48px;
   transition: background 500ms ease, border-color 500ms ease;
 }
 
@@ -2560,6 +2560,7 @@ onUnmounted(() => {
   border-radius: var(--radius-full);
   overflow: hidden;
   cursor: default;
+  position: relative;
 }
 
 .context-bar-fill {
@@ -2581,12 +2582,12 @@ onUnmounted(() => {
 
 /* Add visual grouping: gap after assistant message before next user message */
 .chat-area > :deep(.message-wrapper.message-assistant) {
-  margin-bottom: var(--spacing-lg);
+  margin-bottom: 24px;
 }
 
 /* Small gap between messages in same pair */
 .chat-area > :deep(.message-wrapper.message-user) {
-  margin-bottom: var(--spacing-xs);
+  margin-bottom: 8px;
 }
 
 .chat-area > :deep(.message-wrapper.message-assistant:last-child) {

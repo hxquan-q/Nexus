@@ -423,7 +423,7 @@ function cancelRename() {
 }
 
 .history-item-title {
-  font-size: var(--font-size-sm);
+  font-size: 14px;
   color: var(--color-text-primary);
   font-weight: 500;
   overflow: hidden;
@@ -473,7 +473,7 @@ function cancelRename() {
 }
 
 .history-item-date {
-  font-size: var(--font-size-xs);
+  font-size: 12px;
   color: var(--color-text-secondary);
 }
 
@@ -535,6 +535,7 @@ function cancelRename() {
   transition: all var(--transition-fast);
   flex-shrink: 0;
   padding: 0;
+  opacity: 0;
 }
 
 .history-item:hover .history-item-delete {
