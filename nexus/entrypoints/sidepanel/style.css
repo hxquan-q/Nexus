@@ -301,7 +301,7 @@ html, body {
   padding: var(--spacing-sm);
   border: 1px solid var(--color-error);
   border-radius: var(--radius-sm);
-  background: rgba(255, 59, 48, 0.08);
+  background: var(--color-error-bg);
   text-align: left;
 }
 
@@ -312,7 +312,7 @@ html, body {
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--color-overlay-heavy);
   backdrop-filter: var(--blur-frost);
   z-index: 1000;
   display: flex;

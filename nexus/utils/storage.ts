@@ -382,6 +382,22 @@ export function watchShowReactions(callback: (enabled: boolean) => void): () => 
 }
 
 // ============================================================
+// Onboarding completed flag
+// ============================================================
+
+const onboardingCompletedStorage = storage.defineItem<boolean>('local:onboardingCompleted', {
+  fallback: false,
+});
+
+export async function getOnboardingCompleted(): Promise<boolean> {
+  return await onboardingCompletedStorage.getValue();
+}
+
+export async function setOnboardingCompleted(completed: boolean): Promise<void> {
+  await onboardingCompletedStorage.setValue(completed);
+}
+
+// ============================================================
 // Helper: convert StoredProvider to AIProvider for API layer
 // ============================================================
 

@@ -16,6 +16,13 @@
   --color-success: #34c759;
   --color-warning: #ff9500;
 
+  /* Error/Success/Warning surfaces */
+  --color-error-bg: rgba(255, 59, 48, 0.08);
+  --color-error-border: rgba(255, 59, 48, 0.2);
+  --color-success-bg: rgba(52, 199, 89, 0.08);
+  --color-warning-bg: rgba(255, 149, 0, 0.08);
+  --color-warning-border: rgba(255, 149, 0, 0.2);
+
   /* Code block colors */
   --color-code-bg: #f0f0f5;
   --color-code-border: rgba(0, 0, 0, 0.06);
@@ -23,6 +30,10 @@
   /* Link color */
   --color-link: #007aff;
   --color-link-hover: #0056cc;
+
+  /* Overlay */
+  --color-overlay: rgba(0, 0, 0, 0.3);
+  --color-overlay-heavy: rgba(0, 0, 0, 0.6);
 
   /* Radius */
   --radius-xs: 4px;
@@ -76,7 +87,16 @@
   --color-border: rgba(255, 255, 255, 0.1);
   --color-accent: #0a84ff;
   --color-accent-hover: #409cff;
+  --color-error: #ff453a;
+  --color-success: #30d158;
   --color-warning: #ffb340;
+
+  /* Error/Success/Warning surfaces */
+  --color-error-bg: rgba(255, 69, 58, 0.12);
+  --color-error-border: rgba(255, 69, 58, 0.25);
+  --color-success-bg: rgba(48, 209, 88, 0.12);
+  --color-warning-bg: rgba(255, 179, 64, 0.12);
+  --color-warning-border: rgba(255, 179, 64, 0.25);
 
   /* Code block colors - darker than chat bubble */
   --color-code-bg: #1a1a1c;
@@ -85,4 +105,13 @@
   /* Link color */
   --color-link: #409cff;
   --color-link-hover: #6fb3ff;
+
+  /* Overlay */
+  --color-overlay: rgba(0, 0, 0, 0.5);
+  --color-overlay-heavy: rgba(0, 0, 0, 0.7);
+
+  /* Shadows - more subtle in dark mode */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.2);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.4);
 }

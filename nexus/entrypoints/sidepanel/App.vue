@@ -18,6 +18,8 @@ import {
   watchSelectionQuoteEnabled,
   getSystemPrompt,
   toAIProvider,
+  getOnboardingCompleted,
+  setOnboardingCompleted,
   type StoredProvider,
   type ThemeMode,
 } from '../../utils/storage';
@@ -53,6 +55,7 @@ import ModelSelector from '../../components/ModelSelector.vue';
 import SessionHistory from '../../components/SessionHistory.vue';
 import MessageInput from '../../components/MessageInput.vue';
 import CodeFullscreen from '../../components/CodeFullscreen.vue';
+import OnboardingWizard from '../../components/OnboardingWizard.vue';
 
 // Alias for readability
 type ChatMessageData = ChatMessageType;
@@ -199,6 +202,9 @@ const defaultPresetActions: PresetAction[] = [
 const soundEffectsEnabled = ref(false);
 const unwatchSoundEffects = ref<(() => void) | null>(null);
 
+// Onboarding state
+const showOnboarding = ref(false);
+
 // Reaction display state
 const showReactionsEnabled = ref(true);
 const unwatchShowReactions = ref<(() => void) | null>(null);
@@ -246,7 +252,7 @@ const activeModelSupportsVision = computed(() => {
 
 const contextBarColor = computed(() => {
   if (contextUsagePercent.value < 50) return 'var(--color-success)';
-  if (contextUsagePercent.value < 80) return 'var(--color-warning, #ff9500)';
+  if (contextUsagePercent.value < 80) return 'var(--color-warning)';
   return 'var(--color-error)';
 });
 
@@ -1505,6 +1511,17 @@ async function selectProviderModel(providerId: string, model: string) {
 }
 
 // ============================================================
+// Onboarding
+// ============================================================
+
+async function completeOnboarding(): Promise<void> {
+  showOnboarding.value = false;
+  providers.value = await getAllProviders();
+  const active = await getActiveProvider();
+  activeProviderId.value = active?.id || null;
+}
+
+// ============================================================
 // Theme
 // ============================================================
 
@@ -1748,6 +1765,12 @@ onMounted(async () => {
   const active = await getActiveProvider();
   activeProviderId.value = active?.id || null;
 
+  // Check if onboarding should be shown
+  const onboardingDone = await getOnboardingCompleted();
+  if (!onboardingDone && providers.value.length === 0) {
+    showOnboarding.value = true;
+  }
+
   currentThemeMode.value = await getThemeMode();
   applyTheme(currentThemeMode.value);
 
@@ -1949,8 +1972,16 @@ onUnmounted(() => {
 
     <!-- Chat area -->
     <div class="chat-area" ref="chatAreaRef" role="log" aria-label="Chat messages" aria-live="polite">
+      <!-- Onboarding wizard -->
+      <OnboardingWizard
+        v-if="showOnboarding && messages.length === 0"
+        :language="currentLanguage"
+        @complete="completeOnboarding"
+        @open-settings="openSettings"
+      />
+
       <!-- Empty state -->
-      <div v-if="messages.length === 0" class="empty-state">
+      <div v-if="messages.length === 0 && !showOnboarding" class="empty-state">
         <div class="empty-state-bg"></div>
         <div class="empty-state-content">
           <div class="empty-state-logo">
@@ -2378,7 +2409,7 @@ onUnmounted(() => {
 }
 
 [data-theme="dark"] .empty-state-bg {
-  background: radial-gradient(circle at 50% 40%, rgba(10, 132, 255, 0.08), transparent 70%);
+  background: radial-gradient(circle at 50% 40%, rgba(10, 132, 255, 0.1), transparent 70%);
 }
 
 .empty-state-content {
@@ -2465,7 +2496,7 @@ onUnmounted(() => {
 
 .context-card:hover {
   border-color: var(--color-accent);
-  background: rgba(0, 122, 255, 0.05);
+  background: var(--color-bg-tertiary);
   transform: translateY(-1px);
   box-shadow: var(--shadow-sm);
 }
@@ -2478,7 +2509,7 @@ onUnmounted(() => {
   width: 32px;
   height: 32px;
   border-radius: var(--radius-sm);
-  background: rgba(0, 122, 255, 0.08);
+  background: var(--color-success-bg);
   color: var(--color-accent);
 }
 
@@ -2536,7 +2567,7 @@ onUnmounted(() => {
 
 .template-card:hover {
   border-color: var(--color-accent);
-  background: rgba(0, 122, 255, 0.08);
+  background: var(--color-bg-tertiary);
   transform: scale(1.02);
 }
 
@@ -2587,7 +2618,7 @@ onUnmounted(() => {
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--color-overlay);
   backdrop-filter: var(--blur-frost);
   z-index: 50;
   display: flex;
@@ -2656,8 +2687,8 @@ onUnmounted(() => {
   align-items: center;
   gap: var(--spacing-xs);
   padding: var(--spacing-xs) var(--spacing-md);
-  background: rgba(255, 59, 48, 0.1);
-  border-top: 1px solid rgba(255, 59, 48, 0.2);
+  background: var(--color-error-bg);
+  border-top: 1px solid var(--color-error-border);
   font-size: var(--font-size-xs);
   color: var(--color-error);
 }
@@ -2668,14 +2699,10 @@ onUnmounted(() => {
   align-items: center;
   gap: var(--spacing-xs);
   padding: var(--spacing-xs) var(--spacing-md);
-  background: rgba(255, 149, 0, 0.1);
-  border-top: 1px solid rgba(255, 149, 0, 0.2);
+  background: var(--color-warning-bg);
+  border-top: 1px solid var(--color-warning-border);
   font-size: var(--font-size-xs);
-  color: var(--color-text-secondary);
-}
-
-[data-theme="dark"] .context-warning-bar {
-  color: #ffb340;
+  color: var(--color-warning);
 }
 
 /* Selection quote popup */
@@ -2721,7 +2748,7 @@ onUnmounted(() => {
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.4);
+  background: var(--color-overlay-heavy);
   backdrop-filter: var(--blur-frost);
   z-index: 100;
   display: flex;
@@ -2824,7 +2851,7 @@ onUnmounted(() => {
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.85);
+  background: var(--color-overlay-heavy);
   z-index: 200;
   display: flex;
   align-items: center;
@@ -2861,18 +2888,18 @@ onUnmounted(() => {
   height: 36px;
   border-radius: 50%;
   border: none;
-  background: rgba(255, 255, 255, 0.15);
-  color: white;
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-on-accent);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background 150ms ease;
+  transition: background var(--transition-fast);
   z-index: 10;
 }
 
 .lightbox-close:hover {
-  background: rgba(255, 255, 255, 0.3);
+  background: var(--color-bg-secondary);
 }
 
 .lightbox-image {
@@ -2948,14 +2975,19 @@ onUnmounted(() => {
   }
 }
 
-/* Theme transition on root variables */
-.sidepanel * {
-  transition-property: background-color, border-color, color, box-shadow;
-  transition-duration: 0ms;
+/* Theme transition - applied via JS class toggle during theme switch */
+.sidepanel.theme-transitioning,
+.sidepanel.theme-transitioning .header,
+.sidepanel.theme-transitioning .chat-area,
+.sidepanel.theme-transitioning .input-area {
+  transition: background-color var(--transition-slow), border-color var(--transition-slow), color var(--transition-slow);
 }
 
-.sidepanel.theme-transitioning * {
-  transition-duration: 500ms;
-  transition-timing-function: ease;
+/* Global interactive element transitions */
+.sidepanel button,
+.sidepanel input,
+.sidepanel select,
+.sidepanel textarea {
+  transition: all var(--transition-fast);
 }
 </style>

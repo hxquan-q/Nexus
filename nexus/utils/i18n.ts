@@ -361,6 +361,20 @@ const translations: Record<Language, Record<TranslationKey, string>> = {
     // ===== Empty State Hint =====
     'empty.hint': 'OpenAI, Claude, Gemini, DeepSeek & more',
 
+    // ===== Onboarding =====
+    'onboarding.welcome': 'Welcome to Nexus',
+    'onboarding.subtitle': 'Your AI browser assistant',
+    'onboarding.step1': 'Step 1: Add an AI Provider',
+    'onboarding.providerType': 'Provider',
+    'onboarding.apiKey': 'API Key',
+    'onboarding.baseUrl': 'Base URL',
+    'onboarding.getStarted': 'Get Started',
+    'onboarding.fetchingModels': 'Connecting...',
+    'onboarding.success': 'Connected successfully!',
+    'onboarding.error': 'Connection failed. Please check your settings.',
+    'onboarding.orSettings': 'Or open Settings for more configuration options',
+    'onboarding.openSettings': 'Open Settings',
+
     // ===== Network =====
     'network.offline': 'You are offline. Check your internet connection.',
   },
@@ -716,6 +730,20 @@ const translations: Record<Language, Record<TranslationKey, string>> = {
 
     // ===== Empty State Hint =====
     'empty.hint': 'OpenAI, Claude, Gemini, DeepSeek 等更多',
+
+    // ===== Onboarding =====
+    'onboarding.welcome': '欢迎使用 Nexus',
+    'onboarding.subtitle': '您的 AI 浏览器助手',
+    'onboarding.step1': '第 1 步：添加 AI 供应商',
+    'onboarding.providerType': '供应商',
+    'onboarding.apiKey': 'API 密钥',
+    'onboarding.baseUrl': '基础 URL',
+    'onboarding.getStarted': '开始使用',
+    'onboarding.fetchingModels': '连接中...',
+    'onboarding.success': '连接成功！',
+    'onboarding.error': '连接失败，请检查设置。',
+    'onboarding.orSettings': '或打开设置页面进行更多配置',
+    'onboarding.openSettings': '打开设置',
 
     // ===== Network =====
     'network.offline': '当前处于离线状态，请检查网络连接。',

@@ -1620,7 +1620,7 @@ onMounted(async () => {
 }
 
 .btn-danger:hover {
-  background: rgba(255, 59, 48, 0.1);
+  background: var(--color-error-bg);
 }
 
 .btn-group {
@@ -1692,7 +1692,7 @@ onMounted(async () => {
   height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
-  transition: background 200ms ease;
+  transition: background var(--transition-normal);
 }
 
 .provider-status-dot.configured {
@@ -1700,7 +1700,7 @@ onMounted(async () => {
 }
 
 .provider-status-dot.incomplete {
-  background: #ff9500;
+  background: var(--color-warning);
 }
 
 .provider-details {
@@ -1738,7 +1738,7 @@ onMounted(async () => {
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--color-overlay);
   backdrop-filter: var(--blur-frost);
   z-index: 100;
   display: flex;
@@ -1870,7 +1870,7 @@ onMounted(async () => {
   border-radius: 50%;
   background: var(--color-error);
   flex-shrink: 0;
-  transition: background 200ms ease;
+  transition: background var(--transition-normal);
 }
 
 .mcp-status-dot.connected {
@@ -2060,12 +2060,12 @@ onMounted(async () => {
 }
 
 .test-result.success {
-  background: rgba(52, 199, 89, 0.1);
+  background: var(--color-success-bg);
   color: var(--color-success);
 }
 
 .test-result.error {
-  background: rgba(255, 59, 48, 0.1);
+  background: var(--color-error-bg);
   color: var(--color-error);
 }
 
@@ -2302,7 +2302,7 @@ onMounted(async () => {
 .fetch-model-error {
   margin-top: var(--spacing-xs);
   padding: var(--spacing-xs) var(--spacing-sm);
-  background: rgba(255, 59, 48, 0.1);
+  background: var(--color-error-bg);
   color: var(--color-error);
   border-radius: var(--radius-sm);
   font-size: var(--font-size-xs);

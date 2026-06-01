@@ -436,8 +436,8 @@ const isUser = computed(() => props.message.role === 'user');
 }
 
 .bubble-error {
-  background: rgba(255, 59, 48, 0.08);
-  border: 1px solid rgba(255, 59, 48, 0.2);
+  background: var(--color-error-bg);
+  border: 1px solid var(--color-error-border);
 }
 
 /* Reasoning block */

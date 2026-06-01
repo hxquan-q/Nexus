@@ -260,7 +260,7 @@ defineExpose({ toggle, close, isOpen });
 }
 
 .model-option.active {
-  background: rgba(0, 122, 255, 0.08);
+  background: var(--color-success-bg);
 }
 
 .model-option-name {

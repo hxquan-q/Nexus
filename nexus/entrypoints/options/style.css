@@ -19,3 +19,11 @@ html, body {
 #app {
   min-height: 100vh;
 }
+
+/* Global interactive element transitions */
+.options-page button,
+.options-page input,
+.options-page select,
+.options-page textarea {
+  transition: all var(--transition-fast);
+}

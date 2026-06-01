@@ -371,7 +371,7 @@ defineExpose({ textareaRef, text, focus: () => textareaRef.value?.focus() });
 }
 
 .quick-action-pill:hover {
-  background: rgba(0, 122, 255, 0.08);
+  background: var(--color-bg-tertiary);
   border-color: var(--color-accent);
   color: var(--color-accent);
   transform: translateY(-1px);
@@ -498,7 +498,7 @@ defineExpose({ textareaRef, text, focus: () => textareaRef.value?.focus() });
 }
 
 .share-page-btn.active {
-  background: rgba(0, 122, 255, 0.1);
+  background: var(--color-success-bg);
   border-color: var(--color-accent);
   color: var(--color-accent);
 }
