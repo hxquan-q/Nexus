@@ -36,7 +36,7 @@ import {
   type ShortcutBinding,
 } from '../../utils/storage';
 import { t as i18n, type Language } from '../../utils/i18n';
-import { fetchModels } from '../../utils/api';
+import { fetchModels, testProviderConnection, type ConnectionTestResult } from '../../utils/api';
 import type { ProviderType } from '../../utils/providers/types';
 import {
   exportAllSessions,
@@ -172,12 +172,15 @@ const emptyProvider = (): StoredProvider => ({
 const formProvider = ref<StoredProvider>(emptyProvider());
 const manualModelId = ref('');
 const fetchModelError = ref<string | null>(null);
+const providerTestResult = ref<ConnectionTestResult | null>(null);
+const providerTestLoading = ref(false);
 
 function startAddProvider() {
   formProvider.value = emptyProvider();
   editingProvider.value = null;
   manualModelId.value = '';
   fetchModelError.value = null;
+  providerTestResult.value = null;
   showAddProvider.value = true;
 }
 
@@ -187,12 +190,34 @@ function startEditProvider(provider: StoredProvider) {
   editingProvider.value = provider;
   manualModelId.value = '';
   fetchModelError.value = null;
+  providerTestResult.value = null;
   showAddProvider.value = true;
 }
 
 function cancelEdit() {
   showAddProvider.value = false;
   editingProvider.value = null;
+  providerTestResult.value = null;
+}
+
+async function testProviderConnectionAction() {
+  providerTestLoading.value = true;
+  providerTestResult.value = null;
+  try {
+    const result = await testProviderConnection(
+      formProvider.value.baseUrl,
+      formProvider.value.apiKey,
+      formProvider.value.selectedModel || undefined,
+    );
+    providerTestResult.value = result;
+  } catch (error) {
+    providerTestResult.value = {
+      success: false,
+      message: error instanceof Error ? error.message : 'Test failed',
+    };
+  } finally {
+    providerTestLoading.value = false;
+  }
 }
 
 async function saveProviderForm() {
@@ -922,8 +947,20 @@ onMounted(async () => {
             </div>
 
             <div class="form-actions">
+              <button
+                class="btn-secondary"
+                :disabled="providerTestLoading || !formProvider.baseUrl || !formProvider.apiKey"
+                @click="testProviderConnectionAction"
+              >
+                {{ providerTestLoading ? i18n(currentLanguage, 'mcp.testing') : 'Test Connection' }}
+              </button>
               <button class="btn-ghost" @click="cancelEdit">{{ i18n(currentLanguage, 'options.cancel') }}</button>
               <button class="btn-primary" @click="saveProviderForm">{{ i18n(currentLanguage, 'options.save') }}</button>
+            </div>
+
+            <div v-if="providerTestResult" class="test-result" :class="{ success: providerTestResult.success, error: !providerTestResult.success }">
+              {{ providerTestResult.message }}
+              <span v-if="providerTestResult.responseTime" class="test-response-time">({{ providerTestResult.responseTime }}ms)</span>
             </div>
           </div>
         </div>
@@ -1931,6 +1968,12 @@ onMounted(async () => {
 .test-result.error {
   background: rgba(255, 59, 48, 0.1);
   color: var(--color-error);
+}
+
+.test-response-time {
+  font-size: var(--font-size-xs);
+  opacity: 0.7;
+  margin-left: var(--spacing-xs);
 }
 
 /* Skills */

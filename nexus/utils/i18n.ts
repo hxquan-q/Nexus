@@ -123,6 +123,12 @@ const translations: Record<Language, Record<TranslationKey, string>> = {
     'error.sendFailed': 'Failed to send message',
     'error.generationStopped': 'Generation stopped',
     'error.general': 'Error: {message}',
+    'error.auth': 'Authentication Error',
+    'error.rateLimit': 'Rate Limited',
+    'error.network': 'Network Error',
+    'error.modelNotFound': 'Model Not Found',
+    'error.contextLength': 'Context Too Long',
+    'error.providerError': 'Provider Error',
 
     // ===== Options: Navigation =====
     'nav.providers': 'Providers',
@@ -419,6 +425,12 @@ const translations: Record<Language, Record<TranslationKey, string>> = {
     'error.sendFailed': '发送失败',
     'error.generationStopped': '已停止生成',
     'error.general': '错误: {message}',
+    'error.auth': '认证错误',
+    'error.rateLimit': '请求过于频繁',
+    'error.network': '网络错误',
+    'error.modelNotFound': '模型未找到',
+    'error.contextLength': '上下文过长',
+    'error.providerError': '供应商错误',
 
     // ===== Options: Navigation =====
     'nav.providers': '供应商',

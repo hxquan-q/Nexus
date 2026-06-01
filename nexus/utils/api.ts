@@ -14,15 +14,64 @@ import { getSystemPrompt } from './storage';
 // Error handling
 // ============================================================
 
+export type ApiErrorCode =
+  | 'AUTH'
+  | 'RATE_LIMIT'
+  | 'NETWORK'
+  | 'MODEL_NOT_FOUND'
+  | 'CONTEXT_LENGTH'
+  | 'PROVIDER_ERROR'
+  | 'ABORTED'
+  | 'UNKNOWN';
+
 export class ApiError extends Error {
+  public readonly code: ApiErrorCode;
+  public readonly retryable: boolean;
+  public readonly status?: number;
+  public readonly originalError?: unknown;
+
   constructor(
     message: string,
-    public readonly code: string,
-    public readonly retryable: boolean,
-    public readonly originalError?: unknown,
+    code: ApiErrorCode,
+    retryable: boolean = false,
+    originalError?: unknown,
+    status?: number,
   ) {
     super(message);
     this.name = 'ApiError';
+    this.code = code;
+    this.retryable = retryable;
+    this.originalError = originalError;
+    this.status = status;
+  }
+
+  /**
+   * Create an ApiError from an HTTP status code.
+   */
+  static fromStatusCode(status: number, message: string): ApiError {
+    if (status === 401 || status === 403) {
+      return new ApiError('Invalid API key. Please check your credentials in Settings.', 'AUTH', false, undefined, status);
+    }
+    if (status === 429) {
+      return new ApiError('Rate limited by the provider. Please wait a moment and try again.', 'RATE_LIMIT', true, undefined, status);
+    }
+    if (status === 404) {
+      return new ApiError('Model not found. The selected model may not be available.', 'MODEL_NOT_FOUND', false, undefined, status);
+    }
+    if (status === 400) {
+      // Check for context_length_exceeded pattern in message
+      if (message.includes('context_length_exceeded') || message.includes('max_tokens') || message.includes('too many tokens') || message.includes('reduce the length')) {
+        return new ApiError('The conversation is too long. The context length limit has been exceeded. Try starting a new chat or using fewer attachments.', 'CONTEXT_LENGTH', false, undefined, status);
+      }
+      return new ApiError('Invalid request. The model may not support this feature.', 'PROVIDER_ERROR', false, undefined, status);
+    }
+    if (status === 402) {
+      return new ApiError('Payment required. Please check your provider billing or add credits.', 'AUTH', false, undefined, status);
+    }
+    if (status >= 500) {
+      return new ApiError('The AI provider server is experiencing issues. Please try again later.', 'PROVIDER_ERROR', true, undefined, status);
+    }
+    return new ApiError(message || 'An unknown error occurred.', 'UNKNOWN', false, undefined, status);
   }
 }
 
@@ -30,34 +79,56 @@ function parseError(error: unknown): ApiError {
   if (error instanceof ApiError) return error;
 
   if (error instanceof DOMException && error.name === 'AbortError') {
-    return new ApiError('Request aborted', 'USER_ABORTED', false, error);
+    return new ApiError('Request aborted', 'ABORTED', false, error);
   }
 
   if (error instanceof OpenAI.APIError) {
-    const status = error.status;
+    const status = error.status ?? 0;
+    const message = error.message ?? '';
+
     if (status === 401 || status === 403) {
-      return new ApiError('Authentication failed. Please check your API key.', 'AUTH_ERROR', false, error);
+      return new ApiError('Invalid API key. Please check your credentials in Settings.', 'AUTH', false, error, status);
     }
     if (status === 429) {
-      return new ApiError('Rate limited by the provider. Please wait a moment and try again.', 'RATE_LIMIT', true, error);
+      return new ApiError('Rate limited by the provider. Please wait a moment and try again.', 'RATE_LIMIT', true, error, status);
     }
     if (status === 404) {
-      return new ApiError('Model not found. The selected model may not be available.', 'MODEL_NOT_FOUND', false, error);
+      return new ApiError('Model not found. The selected model may not be available on this provider.', 'MODEL_NOT_FOUND', false, error, status);
     }
     if (status === 400) {
-      return new ApiError('Invalid request. The model may not support this feature.', 'INVALID_REQUEST', false, error);
+      if (message.includes('context_length_exceeded') || message.includes('max_tokens') || message.includes('too many tokens') || message.includes('reduce the length')) {
+        return new ApiError('The conversation is too long. Context length limit exceeded. Try starting a new chat or using fewer attachments.', 'CONTEXT_LENGTH', false, error, status);
+      }
+      return new ApiError('Invalid request. The model may not support this feature or the parameters are invalid.', 'PROVIDER_ERROR', false, error, status);
     }
-    if (status && status >= 500) {
-      return new ApiError('The AI provider server is experiencing issues. Please try again later.', 'SERVER_ERROR', true, error);
+    if (status === 402) {
+      return new ApiError('Payment required. Please check your provider billing or add credits.', 'AUTH', false, error, status);
     }
+    if (status >= 500) {
+      return new ApiError('The AI provider server is experiencing issues. Please try again later.', 'PROVIDER_ERROR', true, error, status);
+    }
+
+    return new ApiError(message || `API error (${status})`, 'PROVIDER_ERROR', false, error, status);
   }
 
   // Network errors
-  if (error instanceof TypeError && error.message.includes('fetch')) {
-    return new ApiError('Network error. Please check your internet connection.', 'NETWORK_ERROR', true, error);
+  if (error instanceof TypeError) {
+    const msg = error.message || '';
+    if (msg.includes('fetch') || msg.includes('network') || msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
+      return new ApiError('Network error. Please check your internet connection.', 'NETWORK', true, error);
+    }
   }
 
-  const message = error instanceof Error ? error.message : String(error);
+  // Generic Error with network hints
+  if (error instanceof Error) {
+    const msg = error.message || '';
+    if (msg.includes('ECONNREFUSED') || msg.includes('ENOTFOUND') || msg.includes('ETIMEDOUT') || msg.includes('socket hang up')) {
+      return new ApiError('Cannot reach server. Please check the base URL and your network connection.', 'NETWORK', true, error);
+    }
+    return new ApiError(msg, 'UNKNOWN', false, error);
+  }
+
+  const message = String(error);
   return new ApiError(message, 'UNKNOWN', false, error);
 }
 
@@ -255,7 +326,7 @@ export async function* streamChat(
 
   const ensureNotAborted = () => {
     if (abortSignal?.aborted) {
-      throw new ApiError('Aborted by user', 'USER_ABORTED', false);
+      throw new ApiError('Aborted by user', 'ABORTED', false);
     }
   };
 
@@ -333,7 +404,7 @@ export async function* streamChat(
       } catch (error) {
         clear();
         if (abortSignal?.aborted) {
-          throw new ApiError('Aborted by user', 'USER_ABORTED', false, error);
+          throw new ApiError('Aborted by user', 'ABORTED', false, error);
         }
 
         const apiError = parseError(error);
@@ -407,7 +478,7 @@ export async function* streamChat(
         return;
       }
       if (abortSignal?.aborted) {
-        throw new ApiError('Aborted by user', 'USER_ABORTED', false, streamError);
+        throw new ApiError('Aborted by user', 'ABORTED', false, streamError);
       }
       throw parseError(streamError);
     }
@@ -513,6 +584,132 @@ When you need to interact with the browser or extract web content, use the provi
   }
 
   return prompt;
+}
+
+/**
+ * Test a provider connection by making a simple API call.
+ * Returns success/failure with response time.
+ */
+export interface ConnectionTestResult {
+  success: boolean;
+  message: string;
+  responseTime?: number;
+  models?: string[];
+}
+
+export async function testProviderConnection(
+  baseUrl: string,
+  apiKey: string,
+  model?: string,
+): Promise<ConnectionTestResult> {
+  const startTime = Date.now();
+
+  try {
+    function resolveBaseUrl(url: string): string {
+      const trimmed = url.trim();
+      if (!trimmed) return trimmed;
+      if (trimmed.endsWith('/')) return trimmed;
+      if (/\/v1$/i.test(trimmed)) return trimmed;
+      return `${trimmed}/v1`;
+    }
+
+    const client = new OpenAI({
+      apiKey,
+      baseURL: resolveBaseUrl(baseUrl),
+      dangerouslyAllowBrowser: true,
+      maxRetries: 0,
+    });
+
+    // Try listing models first (lightweight operation)
+    try {
+      const response = await client.models.list();
+      const models = response.data.map((m) => m.id);
+      const responseTime = Date.now() - startTime;
+
+      return {
+        success: true,
+        message: `Connected successfully. Found ${models.length} model(s).`,
+        responseTime,
+        models,
+      };
+    } catch (modelError: any) {
+      // If model listing fails, try a minimal completion
+      if (modelError?.status === 401 || modelError?.status === 403) {
+        return {
+          success: false,
+          message: 'Invalid API key. Please check your credentials.',
+          responseTime: Date.now() - startTime,
+        };
+      }
+
+      if (modelError?.status === 429) {
+        return {
+          success: false,
+          message: 'Rate limited. Connection works but please wait before trying again.',
+          responseTime: Date.now() - startTime,
+        };
+      }
+
+      // Try a minimal chat completion as fallback
+      if (model) {
+        try {
+          await client.chat.completions.create({
+            model,
+            messages: [{ role: 'user', content: 'Hi' }],
+            max_tokens: 1,
+            stream: false,
+          });
+          return {
+            success: true,
+            message: `Connected successfully. Model "${model}" is available.`,
+            responseTime: Date.now() - startTime,
+          };
+        } catch (completionError: any) {
+          if (completionError?.status === 401 || completionError?.status === 403) {
+            return {
+              success: false,
+              message: 'Invalid API key. Please check your credentials.',
+              responseTime: Date.now() - startTime,
+            };
+          }
+          if (completionError?.status === 404) {
+            return {
+              success: false,
+              message: `Model "${model}" not found. The model may not be available.`,
+              responseTime: Date.now() - startTime,
+            };
+          }
+          throw completionError;
+        }
+      }
+
+      throw modelError;
+    }
+  } catch (error: any) {
+    const responseTime = Date.now() - startTime;
+
+    if (error?.status === 401 || error?.status === 403) {
+      return {
+        success: false,
+        message: 'Invalid API key. Please check your credentials.',
+        responseTime,
+      };
+    }
+
+    if (error instanceof TypeError && (error.message?.includes('fetch') || error.message?.includes('network'))) {
+      return {
+        success: false,
+        message: 'Cannot reach server. Check the base URL and your network connection.',
+        responseTime,
+      };
+    }
+
+    return {
+      success: false,
+      message: error?.message || 'Connection test failed.',
+      responseTime,
+    };
+  }
 }
 
 /**

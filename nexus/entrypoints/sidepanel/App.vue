@@ -30,7 +30,7 @@ import {
   generateSessionTitle,
   type ChatSession,
 } from '../../utils/db';
-import { streamChat, getLastApiMessages, setLastApiMessages, ApiError } from '../../utils/api';
+import { streamChat, getLastApiMessages, setLastApiMessages, ApiError, type ApiErrorCode } from '../../utils/api';
 import { renderMarkdown, decodeData, initChartRendering } from '../../utils/markdown';
 import { t as i18n } from '../../utils/i18n';
 import type { Language } from '../../utils/i18n';
@@ -127,6 +127,53 @@ const selectionQuotePopup = ref({ visible: false, x: 0, y: 0, text: '' });
 // Debounced save timer
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 const SAVE_DEBOUNCE_MS = 300;
+
+// Last error info for the error display component
+const lastErrorInfo = ref<{
+  message: string;
+  code: ApiErrorCode;
+  rawError: string;
+} | null>(null);
+
+function extractErrorInfo(error: any): { message: string; code: ApiErrorCode; rawError: string } {
+  if (error instanceof ApiError) {
+    return {
+      message: error.message,
+      code: error.code,
+      rawError: `${error.code}${error.status ? ` (${error.status})` : ''}: ${error.message}`,
+    };
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  return {
+    message,
+    code: 'UNKNOWN' as ApiErrorCode,
+    rawError: message,
+  };
+}
+
+function getErrorIcon(code: ApiErrorCode): string {
+  switch (code) {
+    case 'AUTH': return 'key';
+    case 'RATE_LIMIT': return 'clock';
+    case 'NETWORK': return 'wifi-off';
+    case 'MODEL_NOT_FOUND': return 'search';
+    case 'CONTEXT_LENGTH': return 'file-text';
+    default: return 'alert-circle';
+  }
+}
+
+function getErrorTitle(code: ApiErrorCode): string {
+  const lang = currentLanguage.value;
+  switch (code) {
+    case 'AUTH': return i18n(lang, 'error.auth');
+    case 'RATE_LIMIT': return i18n(lang, 'error.rateLimit');
+    case 'NETWORK': return i18n(lang, 'error.network');
+    case 'MODEL_NOT_FOUND': return i18n(lang, 'error.modelNotFound');
+    case 'CONTEXT_LENGTH': return i18n(lang, 'error.contextLength');
+    case 'PROVIDER_ERROR': return i18n(lang, 'error.providerError');
+    default: return i18n(lang, 'error.general', { message: '' });
+  }
+}
 
 // Throttled streaming render - avoid excessive DOM updates
 let streamRenderTimer: ReturnType<typeof requestAnimationFrame> | null = null;
@@ -258,9 +305,59 @@ const canSendMessage = computed(() => {
 const filteredSessions = computed(() => {
   const query = historySearchQuery.value.trim().toLowerCase();
   if (!query) return sessions.value;
-  return sessions.value.filter((s) =>
-    s.title.toLowerCase().includes(query)
-  );
+  return sessions.value.filter((s) => {
+    if (s.title.toLowerCase().includes(query)) return true;
+    return s.messages.some((m) =>
+      m.content?.toLowerCase().includes(query)
+    );
+  });
+});
+
+/**
+ * Group sessions by date for display.
+ * Returns an array of { label, sessions } objects.
+ */
+const groupedSessions = computed(() => {
+  const groups: { label: string; sessions: ChatSession[] }[] = [];
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const yesterday = new Date(today.getTime() - 86400000);
+  const thisWeekStart = new Date(today.getTime() - today.getDay() * 86400000);
+
+  const locale = currentLanguage.value === 'zh-CN' ? 'zh-CN' : 'en-US';
+
+  let todayGroup: ChatSession[] = [];
+  let yesterdayGroup: ChatSession[] = [];
+  let weekGroup: ChatSession[] = [];
+  let olderGroup: ChatSession[] = [];
+
+  for (const s of filteredSessions.value) {
+    const date = new Date(s.updatedAt);
+    if (date >= today) {
+      todayGroup.push(s);
+    } else if (date >= yesterday) {
+      yesterdayGroup.push(s);
+    } else if (date >= thisWeekStart) {
+      weekGroup.push(s);
+    } else {
+      olderGroup.push(s);
+    }
+  }
+
+  if (todayGroup.length > 0) {
+    groups.push({ label: locale === 'zh-CN' ? '今天' : 'Today', sessions: todayGroup });
+  }
+  if (yesterdayGroup.length > 0) {
+    groups.push({ label: locale === 'zh-CN' ? '昨天' : 'Yesterday', sessions: yesterdayGroup });
+  }
+  if (weekGroup.length > 0) {
+    groups.push({ label: locale === 'zh-CN' ? '本周' : 'This Week', sessions: weekGroup });
+  }
+  if (olderGroup.length > 0) {
+    groups.push({ label: locale === 'zh-CN' ? '更早' : 'Older', sessions: olderGroup });
+  }
+
+  return groups;
 });
 
 function openLightbox(dataUrl: string) {
@@ -301,6 +398,22 @@ function getUserMessageDisplayContent(message: ChatMessage): string {
     }
   }
   return message.content;
+}
+
+function parseErrorContent(content: string): { message: string; code: ApiErrorCode; rawError: string } | null {
+  try {
+    const jsonStr = content.replace('__ERROR__:', '');
+    return JSON.parse(jsonStr);
+  } catch {
+    return null;
+  }
+}
+
+async function copyErrorDetails(rawError: string): Promise<void> {
+  const copied = await writeTextToClipboard(rawError);
+  if (copied) {
+    showToast('Error details copied to clipboard');
+  }
 }
 
 function formatTime(timestamp: number): string {
@@ -541,7 +654,7 @@ async function sendWithExistingMessages(): Promise<void> {
     }
     assistantMessage.timestamp = Date.now();
   } catch (error: any) {
-    const isUserAborted = error instanceof ApiError && error.code === 'USER_ABORTED';
+    const isUserAborted = error instanceof ApiError && error.code === 'ABORTED';
     if (isUserAborted) {
       if (assistantMessage && !assistantMessage.content.trim() && !(assistantMessage.reasoning || '').trim()) {
         const lastMessage = messages.value[messages.value.length - 1];
@@ -549,11 +662,28 @@ async function sendWithExistingMessages(): Promise<void> {
           messages.value.pop();
           triggerRef(messages);
         }
+      } else if (assistantMessage) {
+        // Partial response was received, mark as interrupted
+        assistantMessage.content = (assistantMessage.content || '').trim();
+        if (assistantMessage.content) {
+          assistantMessage.content += '\n\n---\n*Generation interrupted.*';
+          triggerRef(messages);
+        }
       }
     } else {
+      // Remove the empty assistant message
+      if (assistantMessage) {
+        const lastMessage = messages.value[messages.value.length - 1];
+        if (lastMessage === assistantMessage) {
+          messages.value.pop();
+          triggerRef(messages);
+        }
+      }
+      const errorInfo = extractErrorInfo(error);
+      lastErrorInfo.value = errorInfo;
       messages.value.push({
         role: 'assistant',
-        content: `__ERROR__: ${error.message}`,
+        content: `__ERROR__:${JSON.stringify(errorInfo)}`,
         timestamp: Date.now(),
       });
       triggerRef(messages);
@@ -1332,6 +1462,8 @@ async function sendMessage() {
 
   let assistantMessage: ChatMessage | null = null;
   try {
+    // Signal streaming start to background
+    browser.runtime.sendMessage({ type: 'STREAM_START', sessionId: currentSession.value?.id }).catch(() => {});
     assistantMessage = {
       role: 'assistant',
       content: '',
@@ -1393,7 +1525,7 @@ async function sendMessage() {
 
     assistantMessage.timestamp = Date.now();
   } catch (error: any) {
-    const isUserAborted = error instanceof ApiError && error.code === 'USER_ABORTED';
+    const isUserAborted = error instanceof ApiError && error.code === 'ABORTED';
     if (isUserAborted) {
       if (assistantMessage && !assistantMessage.content.trim() && !(assistantMessage.reasoning || '').trim()) {
         const lastMessage = messages.value[messages.value.length - 1];
@@ -1401,11 +1533,26 @@ async function sendMessage() {
           messages.value.pop();
           triggerRef(messages);
         }
+      } else if (assistantMessage) {
+        assistantMessage.content = (assistantMessage.content || '').trim();
+        if (assistantMessage.content) {
+          assistantMessage.content += '\n\n---\n*Generation interrupted.*';
+          triggerRef(messages);
+        }
       }
     } else {
+      if (assistantMessage) {
+        const lastMessage = messages.value[messages.value.length - 1];
+        if (lastMessage === assistantMessage) {
+          messages.value.pop();
+          triggerRef(messages);
+        }
+      }
+      const errorInfo = extractErrorInfo(error);
+      lastErrorInfo.value = errorInfo;
       messages.value.push({
         role: 'assistant',
-        content: `Error: ${error.message}`,
+        content: `__ERROR__:${JSON.stringify(errorInfo)}`,
         timestamp: Date.now(),
       });
       triggerRef(messages);
@@ -1545,6 +1692,47 @@ async function removeSession(id: string, e: Event) {
       }
     }
   }
+}
+
+// Session rename state
+const renamingSessionId = ref<string | null>(null);
+const renameInput = ref('');
+
+function startRenameSession(session: ChatSession, e: Event) {
+  e.stopPropagation();
+  renamingSessionId.value = session.id;
+  renameInput.value = session.title;
+  nextTick(() => {
+    const input = document.querySelector('.rename-input') as HTMLInputElement;
+    if (input) {
+      input.focus();
+      input.select();
+    }
+  });
+}
+
+async function finishRenameSession() {
+  if (!renamingSessionId.value) return;
+  const id = renamingSessionId.value;
+  const newTitle = renameInput.value.trim();
+  renamingSessionId.value = null;
+
+  if (!newTitle) return;
+
+  const session = sessions.value.find((s) => s.id === id);
+  if (!session || session.title === newTitle) return;
+
+  session.title = newTitle;
+  if (currentSession.value?.id === id) {
+    currentSession.value.title = newTitle;
+  }
+  await saveCurrentSession();
+  await loadInitialSessions();
+}
+
+function cancelRenameSession() {
+  renamingSessionId.value = null;
+  renameInput.value = '';
 }
 
 // ============================================================
@@ -1852,7 +2040,7 @@ async function handleContentImageMessage(imageUrl: string, prompt: string): Prom
 
     assistantMessage.timestamp = Date.now();
   } catch (error: any) {
-    const isUserAborted = error instanceof ApiError && error.code === 'USER_ABORTED';
+    const isUserAborted = error instanceof ApiError && error.code === 'ABORTED';
     if (isUserAborted) {
       if (assistantMessage && !assistantMessage.content.trim() && !(assistantMessage.reasoning || '').trim()) {
         const lastMessage = messages.value[messages.value.length - 1];
@@ -1860,11 +2048,26 @@ async function handleContentImageMessage(imageUrl: string, prompt: string): Prom
           messages.value.pop();
           triggerRef(messages);
         }
+      } else if (assistantMessage) {
+        assistantMessage.content = (assistantMessage.content || '').trim();
+        if (assistantMessage.content) {
+          assistantMessage.content += '\n\n---\n*Generation interrupted.*';
+          triggerRef(messages);
+        }
       }
     } else {
+      if (assistantMessage) {
+        const lastMessage = messages.value[messages.value.length - 1];
+        if (lastMessage === assistantMessage) {
+          messages.value.pop();
+          triggerRef(messages);
+        }
+      }
+      const errorInfo = extractErrorInfo(error);
+      lastErrorInfo.value = errorInfo;
       messages.value.push({
         role: 'assistant',
-        content: `Error: ${error.message}`,
+        content: `__ERROR__:${JSON.stringify(errorInfo)}`,
         timestamp: Date.now(),
       });
       triggerRef(messages);
@@ -1972,7 +2175,17 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  // Abort any in-progress generation
   chatAbortController.value?.abort();
+
+  // Signal streaming end to background
+  browser.runtime.sendMessage({ type: 'STREAM_END' }).catch(() => {});
+
+  // Save any partial content
+  if (currentSession.value && messages.value.length > 0) {
+    saveCurrentSession().catch(() => {});
+  }
+
   if (saveTimer) clearTimeout(saveTimer);
   if (toastTimer) clearTimeout(toastTimer);
   if (streamRenderTimer) cancelAnimationFrame(streamRenderTimer);
@@ -2005,7 +2218,7 @@ onUnmounted(() => {
     <!-- Header -->
     <header class="header">
       <div class="header-left">
-        <button class="header-btn" @click="openHistory" :title="i18n(currentLanguage, 'header.history')">
+        <button class="header-btn" @click="openHistory" :title="i18n(currentLanguage, 'header.history')" :aria-label="i18n(currentLanguage, 'header.history')">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="10"/>
             <polyline points="12 6 12 12 16 14"/>
@@ -2014,7 +2227,7 @@ onUnmounted(() => {
       </div>
 
       <div class="header-center">
-        <button class="model-selector-btn" @click="showModelSelector = !showModelSelector; modelSearchQuery = ''">
+        <button class="model-selector-btn" @click="showModelSelector = !showModelSelector; modelSearchQuery = ''" :aria-label="'Select model: ' + activeModelName" aria-haspopup="listbox">
           <span class="model-name">{{ activeModelName }}</span>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <polyline points="6 9 12 15 18 9"/>
@@ -2023,7 +2236,7 @@ onUnmounted(() => {
       </div>
 
       <div class="header-right">
-        <button class="header-btn" @click="toggleTheme" :title="i18n(currentLanguage, 'header.toggleTheme')">
+        <button class="header-btn" @click="toggleTheme" :title="i18n(currentLanguage, 'header.toggleTheme')" :aria-label="i18n(currentLanguage, 'header.toggleTheme')">
           <svg v-if="currentThemeMode === 'light'" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="5"/>
             <line x1="12" y1="1" x2="12" y2="3"/>
@@ -2044,13 +2257,13 @@ onUnmounted(() => {
             <line x1="12" y1="17" x2="12" y2="21"/>
           </svg>
         </button>
-        <button class="header-btn" @click="newChat" :title="i18n(currentLanguage, 'header.newChat')">
+        <button class="header-btn" @click="newChat" :title="i18n(currentLanguage, 'header.newChat')" :aria-label="i18n(currentLanguage, 'header.newChat')">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <line x1="12" y1="5" x2="12" y2="19"/>
             <line x1="5" y1="12" x2="19" y2="12"/>
           </svg>
         </button>
-        <button class="header-btn" @click="openSettings" :title="i18n(currentLanguage, 'header.settings')">
+        <button class="header-btn" @click="openSettings" :title="i18n(currentLanguage, 'header.settings')" :aria-label="i18n(currentLanguage, 'header.settings')">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="3"/>
             <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/>
@@ -2100,7 +2313,7 @@ onUnmounted(() => {
     </header>
 
     <!-- Chat area -->
-    <div class="chat-area" ref="chatAreaRef">
+    <div class="chat-area" ref="chatAreaRef" role="log" aria-label="Chat messages" aria-live="polite">
       <!-- Empty state -->
       <div v-if="messages.length === 0" class="empty-state">
         <div class="empty-state-bg"></div>
@@ -2206,11 +2419,40 @@ onUnmounted(() => {
 
               <!-- Normal content -->
               <template v-else>
-                <!-- Error message with retry -->
-                <template v-if="message.content?.startsWith('__ERROR__')">
+                <!-- Error message with structured display -->
+                <template v-if="message.content?.startsWith('__ERROR__:')">
                   <div class="error-content">
-                    {{ message.content.replace('__ERROR__: ', '') }}
-                    <button class="retry-btn" @click="regenerateLastResponse">Retry</button>
+                    <template v-if="parseErrorContent(message.content)">
+                      <div class="error-header">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--color-error)" stroke-width="2">
+                          <circle cx="12" cy="12" r="10"/>
+                          <line x1="15" y1="9" x2="9" y2="15"/>
+                          <line x1="9" y1="9" x2="15" y2="15"/>
+                        </svg>
+                        <span class="error-type">{{ getErrorTitle(parseErrorContent(message.content)!.code) }}</span>
+                      </div>
+                      <p class="error-message">{{ parseErrorContent(message.content)!.message }}</p>
+                      <div class="error-actions">
+                        <button class="error-action-btn retry" @click="regenerateLastResponse">
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="23 4 23 10 17 10"/>
+                            <path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/>
+                          </svg>
+                          Retry
+                        </button>
+                        <button class="error-action-btn copy-error" @click="copyErrorDetails(parseErrorContent(message.content)!.rawError)">
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                            <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
+                          </svg>
+                          Copy error
+                        </button>
+                      </div>
+                    </template>
+                    <template v-else>
+                      {{ message.content.replace('__ERROR__: ', '') }}
+                      <button class="retry-btn" @click="regenerateLastResponse">Retry</button>
+                    </template>
                   </div>
                 </template>
 
@@ -2389,6 +2631,7 @@ onUnmounted(() => {
           class="send-btn stop-btn"
           @click="terminateCurrentGeneration"
           :title="i18n(currentLanguage, 'chat.stopGenerating')"
+          :aria-label="i18n(currentLanguage, 'chat.stopGenerating')"
         >
           <div class="stop-btn-pulse"></div>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
@@ -2436,24 +2679,47 @@ onUnmounted(() => {
           />
         </div>
         <div class="history-list" ref="sessionListRef" @scroll="handleSessionListScroll">
-          <button
-            v-for="session in filteredSessions"
-            :key="session.id"
-            class="history-item"
-            :class="{ active: currentSession?.id === session.id }"
-            @click="loadSession(session)"
-          >
-            <div class="history-item-info">
-              <span class="history-item-title">{{ session.title }}</span>
-              <span class="history-item-date">{{ formatSessionDate(session.updatedAt) }}</span>
-            </div>
-            <button class="history-item-delete" @click="(e) => removeSession(session.id, e)">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="3 6 5 6 21 6"/>
-                <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
-              </svg>
+          <template v-for="group in groupedSessions" :key="group.label">
+            <div class="history-date-group">{{ group.label }}</div>
+            <button
+              v-for="session in group.sessions"
+              :key="session.id"
+              class="history-item"
+              :class="{ active: currentSession?.id === session.id }"
+              @click="loadSession(session)"
+            >
+              <div class="history-item-info">
+                <template v-if="renamingSessionId === session.id">
+                  <input
+                    class="rename-input"
+                    v-model="renameInput"
+                    @keydown.enter="finishRenameSession"
+                    @keydown.escape="cancelRenameSession"
+                    @blur="finishRenameSession"
+                    @click.stop
+                  />
+                </template>
+                <template v-else>
+                  <span class="history-item-title">{{ session.title }}</span>
+                </template>
+                <span class="history-item-date">{{ formatSessionDate(session.updatedAt) }}</span>
+              </div>
+              <div class="history-item-actions">
+                <button class="history-item-action" @click="(e) => startRenameSession(session, e)" title="Rename">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
+                    <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                  </svg>
+                </button>
+                <button class="history-item-delete" @click="(e) => removeSession(session.id, e)">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="3 6 5 6 21 6"/>
+                    <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
+                  </svg>
+                </button>
+              </div>
             </button>
-          </button>
+          </template>
           <div v-if="sessions.length === 0" class="history-empty">
             {{ i18n(currentLanguage, 'history.noChats') }}
           </div>
@@ -2617,6 +2883,11 @@ onUnmounted(() => {
 .header-btn:hover {
   background: var(--color-bg-secondary);
   color: var(--color-text-primary);
+}
+
+.header-btn:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
 }
 
 .model-selector-btn {
@@ -3165,6 +3436,64 @@ onUnmounted(() => {
   font-size: var(--font-size-sm);
 }
 
+.error-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  font-weight: 600;
+}
+
+.error-type {
+  text-transform: uppercase;
+  font-size: var(--font-size-xs);
+  letter-spacing: 0.5px;
+}
+
+.error-message {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+}
+
+.error-actions {
+  display: flex;
+  gap: var(--spacing-xs);
+  margin-top: var(--spacing-xs);
+}
+
+.error-action-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border: 1px solid var(--color-error);
+  background: transparent;
+  color: var(--color-error);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: all var(--transition-fast);
+  font-family: var(--font-body);
+}
+
+.error-action-btn:hover {
+  background: var(--color-error);
+  color: white;
+}
+
+.error-action-btn.copy-error {
+  border-color: var(--color-border);
+  color: var(--color-text-secondary);
+}
+
+.error-action-btn.copy-error:hover {
+  background: var(--color-bg-secondary);
+  border-color: var(--color-border);
+  color: var(--color-text-primary);
+}
+
 .retry-btn {
   align-self: flex-start;
   padding: var(--spacing-xs) var(--spacing-sm);
@@ -3386,6 +3715,11 @@ onUnmounted(() => {
   color: var(--color-text-primary);
 }
 
+.input-action-btn:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
 .input-textarea {
   flex: 1;
   padding: var(--spacing-sm) var(--spacing-md);
@@ -3435,6 +3769,11 @@ onUnmounted(() => {
 
 .send-btn.active:hover {
   background: var(--color-accent-hover);
+}
+
+.send-btn:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
 }
 
 .stop-btn {
@@ -3490,6 +3829,24 @@ onUnmounted(() => {
   padding: var(--spacing-xs);
 }
 
+.history-date-group {
+  padding: var(--spacing-xs) var(--spacing-md);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  position: sticky;
+  top: 0;
+  background: var(--color-bg-primary);
+  z-index: 1;
+  margin-top: var(--spacing-xs);
+}
+
+.history-date-group:first-child {
+  margin-top: 0;
+}
+
 .history-item {
   display: flex;
   align-items: center;
@@ -3534,6 +3891,50 @@ onUnmounted(() => {
   color: var(--color-text-secondary);
 }
 
+.rename-input {
+  width: 100%;
+  padding: 2px 6px;
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  font-family: var(--font-body);
+  outline: none;
+}
+
+.history-item-actions {
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.history-item:hover .history-item-actions {
+  opacity: 1;
+}
+
+.history-item-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: all var(--transition-fast);
+  padding: 0;
+}
+
+.history-item-action:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-primary);
+}
+
 .history-item-delete {
   display: flex;
   align-items: center;
@@ -3545,9 +3946,9 @@ onUnmounted(() => {
   color: var(--color-text-secondary);
   cursor: pointer;
   border-radius: var(--radius-sm);
-  opacity: 0;
   transition: all var(--transition-fast);
   flex-shrink: 0;
+  padding: 0;
 }
 
 .history-item:hover .history-item-delete {

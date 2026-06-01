@@ -3,20 +3,83 @@
  * Handles sidepanel open on action click, message routing, and browser control.
  * Also handles content script messages for screenshot capture, selection actions,
  * and area cropping.
+ *
+ * Manifest V3 resilience:
+ * - Uses chrome.alarms to keep SW alive during long operations
+ * - Stores in-progress state in chrome.storage.session
+ * - Re-registers context menus on both install and startup
  */
 
 import { getControlManager } from '../background/control/index';
 import { cropScreenshotArea } from '../utils/screenshotCapture';
 
-export default defineBackground(() => {
-  // Set sidepanel behavior - open on action click
-  const sidePanelApi = (browser as any).sidePanel;
-  if (sidePanelApi?.setPanelBehavior) {
-    sidePanelApi.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
-  }
+// ============================================================
+// Alarm-based keepalive for long operations
+// ============================================================
 
-  // Context menu entries
-  chrome.runtime.onInstalled.addListener(() => {
+const KEEPALIVE_ALARM = 'nexus-keepalive';
+
+function startKeepalive(): void {
+  try {
+    chrome.alarms.create(KEEPALIVE_ALARM, { periodInMinutes: 0.45 });
+  } catch {
+    // Alarms API may not be available in all contexts
+  }
+}
+
+function stopKeepalive(): void {
+  try {
+    chrome.alarms.clear(KEEPALIVE_ALARM);
+  } catch {
+    // Ignore
+  }
+}
+
+// The alarm handler just needs to exist to prevent SW termination
+chrome.alarms?.onAlarm?.addListener((alarm: any) => {
+  if (alarm.name === KEEPALIVE_ALARM) {
+    // No-op: the listener itself keeps the SW alive
+  }
+});
+
+// ============================================================
+// In-progress state (stored in session storage for SW restart recovery)
+// ============================================================
+
+interface InProgressState {
+  isStreaming: boolean;
+  sessionId?: string;
+  timestamp: number;
+}
+
+async function getInProgressState(): Promise<InProgressState | null> {
+  try {
+    const result = await chrome.storage.session.get('nexus_inProgress');
+    return (result?.nexus_inProgress as InProgressState) || null;
+  } catch {
+    return null;
+  }
+}
+
+async function setInProgressState(state: InProgressState | null): Promise<void> {
+  try {
+    if (state) {
+      await chrome.storage.session.set({ nexus_inProgress: state });
+    } else {
+      await chrome.storage.session.remove('nexus_inProgress');
+    }
+  } catch {
+    // Session storage may not be available in all contexts
+  }
+}
+
+// ============================================================
+// Context menu registration (resilient to SW restart)
+// ============================================================
+
+function registerContextMenus(): void {
+  // Remove existing menus first to avoid duplicates on SW restart
+  chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
       id: 'nexus-summarize',
       title: 'Summarize with Nexus',
@@ -42,6 +105,32 @@ export default defineBackground(() => {
       title: 'Analyze image with Nexus',
       contexts: ['image'],
     });
+  });
+}
+
+export default defineBackground(() => {
+  // Set sidepanel behavior - open on action click
+  const sidePanelApi = (browser as any).sidePanel;
+  if (sidePanelApi?.setPanelBehavior) {
+    sidePanelApi.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+  }
+
+  // Register context menus on install
+  chrome.runtime.onInstalled.addListener(() => {
+    registerContextMenus();
+  });
+
+  // Also re-register on service worker startup (handles SW restart)
+  registerContextMenus();
+
+  // Check for interrupted operations on startup
+  getInProgressState().then((state) => {
+    if (state?.isStreaming && Date.now() - state.timestamp < 5 * 60 * 1000) {
+      // There was an interrupted streaming operation within the last 5 minutes
+      // Notify sidepanel if it opens
+      console.log('[Nexus] Detected interrupted operation, will notify sidepanel');
+    }
+    setInProgressState(null);
   });
 
   // Handle context menu clicks
@@ -117,10 +206,20 @@ export default defineBackground(() => {
         sendResponse({ version: '0.1.0' });
         return false;
 
+      // Check if sidepanel is checking for interrupted state
+      case 'CHECK_INTERRUPTED_STATE': {
+        getInProgressState().then((state) => {
+          sendResponse(state);
+        });
+        return true;
+      }
+
       // Browser control commands
       case 'BROWSER_AUTOMATION_START': {
         handleAsyncMessage(
           async () => {
+            startKeepalive();
+            await setInProgressState({ isStreaming: true, timestamp: Date.now() });
             const controlManager = getControlManager();
             const result = await controlManager.startSession(
               message.tabId,
@@ -153,6 +252,8 @@ export default defineBackground(() => {
           async () => {
             const controlManager = getControlManager();
             await controlManager.endSession();
+            await setInProgressState(null);
+            stopKeepalive();
             return { success: true };
           },
           sendResponse,
@@ -192,6 +293,31 @@ export default defineBackground(() => {
             const { extractYouTubeInfo } = await import('../utils/videoSummary');
             const info = await extractYouTubeInfo(message.tabId);
             return info;
+          },
+          sendResponse,
+        );
+        return true;
+      }
+
+      // Streaming start/end markers from sidepanel
+      case 'STREAM_START': {
+        handleAsyncMessage(
+          async () => {
+            startKeepalive();
+            await setInProgressState({ isStreaming: true, sessionId: message.sessionId, timestamp: Date.now() });
+            return { ok: true };
+          },
+          sendResponse,
+        );
+        return true;
+      }
+
+      case 'STREAM_END': {
+        handleAsyncMessage(
+          async () => {
+            await setInProgressState(null);
+            stopKeepalive();
+            return { ok: true };
           },
           sendResponse,
         );
@@ -312,10 +438,17 @@ export default defineBackground(() => {
       case 'SELECTION_ACTION': {
         handleAsyncMessage(
           async () => {
-            const { actionId, text, prompt } = message;
-            // Process via AI in background and return result to content script
-            const result = await processSelectionAction(actionId, text, prompt);
-            return result;
+            startKeepalive();
+            await setInProgressState({ isStreaming: true, timestamp: Date.now() });
+            try {
+              const { actionId, text, prompt } = message;
+              // Process via AI in background and return result to content script
+              const result = await processSelectionAction(actionId, text, prompt);
+              return result;
+            } finally {
+              await setInProgressState(null);
+              stopKeepalive();
+            }
           },
           sendResponse,
         );

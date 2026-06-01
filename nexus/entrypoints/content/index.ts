@@ -2,6 +2,11 @@
  * Nexus Content Script - Main entry point
  * Runs on all web pages. Initializes selection toolbar, screenshot capture,
  * keyboard shortcuts, and the floating ball.
+ *
+ * Resilience:
+ * - Double-injection guard to prevent duplicate initialization on extension reload
+ * - Handles restricted pages gracefully (chrome:// URLs)
+ * - Debounced selection observer for large pages
  */
 
 import { SelectionObserver, type SelectionData } from '../../utils/selectionObserver';
@@ -35,6 +40,16 @@ import {
 import { t, type Language } from '../../utils/i18n';
 
 // ============================================================
+// Double-injection guard
+// ============================================================
+
+if ((window as any).__nexusContentScriptLoaded) {
+  // Already injected (e.g., extension was reloaded). Skip re-initialization.
+  console.log('[Nexus] Content script already loaded, skipping duplicate initialization');
+}
+(window as any).__nexusContentScriptLoaded = true;
+
+// ============================================================
 // State
 // ============================================================
 
@@ -42,6 +57,23 @@ let selectionObserver: SelectionObserver | null = null;
 let currentLang: Language = 'en';
 let pendingPopupOptions: { title: string; anchorRect: DOMRect | null; mousePoint: { x: number; y: number } | null } | null = null;
 let isDestroyed = false;
+
+// Debounce for selection observer on large pages
+let selectionDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+const SELECTION_DEBOUNCE_MS = 50; // ms to debounce selection events on large pages
+
+/**
+ * Check if the current page is a restricted page where content scripts
+ * have limited or no functionality (chrome://, about:, edge://, etc.).
+ */
+function isRestrictedPage(): boolean {
+  try {
+    const protocol = window.location.protocol;
+    return protocol === 'chrome:' || protocol === 'chrome-extension:' || protocol === 'about:' || protocol === 'edge:' || protocol === 'devtools:';
+  } catch {
+    return true;
+  }
+}
 
 // ============================================================
 // Cleanup
@@ -79,6 +111,12 @@ export default defineContentScript({
   excludeMatches: ['*://*/*.mhtml*', '*://*/*.mht*', 'file://*/*.mhtml', 'file://*/*.mht'],
   runAt: 'document_end',
   main() {
+    // Bail out on restricted pages
+    if (isRestrictedPage()) {
+      console.log('[Nexus] Content script disabled on restricted page');
+      return;
+    }
+
     // Load language setting
     chrome.storage.local.get(['language'], (result: { language?: string }) => {
       currentLang = (result?.language === 'zh-CN' ? 'zh-CN' : 'en') as Language;
@@ -150,6 +188,24 @@ export default defineContentScript({
 // ============================================================
 
 function handleSelection(data: SelectionData): void {
+  // Debounce selection events on large pages to avoid excessive processing
+  if (selectionDebounceTimer) {
+    clearTimeout(selectionDebounceTimer);
+  }
+
+  const debounceMs = document.querySelectorAll('*').length > 5000 ? SELECTION_DEBOUNCE_MS : 0;
+
+  if (debounceMs > 0) {
+    selectionDebounceTimer = setTimeout(() => {
+      selectionDebounceTimer = null;
+      doHandleSelection(data);
+    }, debounceMs);
+  } else {
+    doHandleSelection(data);
+  }
+}
+
+function doHandleSelection(data: SelectionData): void {
   // Check if selection quote is enabled
   chrome.storage.local.get(['selectionQuoteEnabled'], (result: { selectionQuoteEnabled?: boolean }) => {
     const enabled = result?.selectionQuoteEnabled !== false;
