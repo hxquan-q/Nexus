@@ -57,9 +57,8 @@ import {
   toggleMcpServer,
   generateMcpServerId,
   watchMcpServers,
-  type McpServer,
 } from '../../utils/mcpStorage';
-import { mcpManager } from '../../utils/mcp';
+import { mcpManager, type McpServer } from '../../utils/mcp';
 import {
   getAllSkills,
   importSkill,
@@ -241,6 +240,26 @@ async function saveProviderForm() {
   showAddProvider.value = false;
   editingProvider.value = null;
   showSaveToast('Provider saved successfully');
+}
+
+async function moveProviderUp(index: number) {
+  if (index <= 0) return;
+  const temp = providers.value[index];
+  providers.value[index] = providers.value[index - 1];
+  providers.value[index - 1] = temp;
+  for (const p of providers.value) {
+    await saveProvider(p);
+  }
+}
+
+async function moveProviderDown(index: number) {
+  if (index >= providers.value.length - 1) return;
+  const temp = providers.value[index];
+  providers.value[index] = providers.value[index + 1];
+  providers.value[index + 1] = temp;
+  for (const p of providers.value) {
+    await saveProvider(p);
+  }
 }
 
 async function removeProvider(id: string) {
@@ -837,7 +856,7 @@ onMounted(async () => {
           </div>
 
           <div
-            v-for="provider in providers"
+            v-for="(provider, pIndex) in providers"
             :key="provider.id"
             class="provider-card"
             :class="{ active: activeProviderId === provider.id }"
@@ -845,7 +864,9 @@ onMounted(async () => {
             <div class="provider-info">
               <div class="provider-header">
                 <span class="provider-name">{{ provider.name }}</span>
-                <span class="provider-type-badge">{{ provider.type }}</span>
+                <span class="provider-type-badge" :class="'provider-type-' + provider.type">{{ provider.type }}</span>
+                <span v-if="!provider.apiKey || !provider.baseUrl" class="provider-status-dot incomplete" :title="i18n(currentLanguage, 'providers.incomplete')"></span>
+                <span v-else class="provider-status-dot configured" :title="i18n(currentLanguage, 'providers.configured')"></span>
                 <span v-if="activeProviderId === provider.id" class="provider-active-badge">{{ i18n(currentLanguage, 'options.active') }}</span>
               </div>
               <div class="provider-details">
@@ -854,6 +875,22 @@ onMounted(async () => {
               </div>
             </div>
             <div class="provider-actions">
+              <button
+                class="btn-ghost reorder-btn"
+                @click="moveProviderUp(pIndex)"
+                :disabled="pIndex === 0"
+                :title="i18n(currentLanguage, 'presets.moveUp')"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="18 15 12 9 6 15"/></svg>
+              </button>
+              <button
+                class="btn-ghost reorder-btn"
+                @click="moveProviderDown(pIndex)"
+                :disabled="pIndex === providers.length - 1"
+                :title="i18n(currentLanguage, 'presets.moveDown')"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+              </button>
               <button
                 v-if="activeProviderId !== provider.id"
                 class="btn-secondary"
@@ -1619,6 +1656,22 @@ onMounted(async () => {
   border-radius: var(--radius-full);
 }
 
+.provider-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  transition: background 200ms ease;
+}
+
+.provider-status-dot.configured {
+  background: var(--color-success);
+}
+
+.provider-status-dot.incomplete {
+  background: #ff9500;
+}
+
 .provider-details {
   display: flex;
   flex-direction: column;
@@ -1630,6 +1683,21 @@ onMounted(async () => {
   display: flex;
   gap: var(--spacing-xs);
   flex-shrink: 0;
+  align-items: center;
+}
+
+.reorder-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+}
+
+.reorder-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
 }
 
 /* Modal */

@@ -21,13 +21,13 @@ interface StreamOptions {
   maxToolIterations?: number;
 }
 
-// Throttled render state
-let streamRenderTimer: ReturnType<typeof requestAnimationFrame> | null = null;
-let streamContentDirty = false;
-
 export function useStreamChat(
   messages: ShallowRef<ChatMessageType[]>,
 ) {
+  // Throttled render state - instance-scoped to avoid cross-component leaks
+  let streamRenderTimer: ReturnType<typeof requestAnimationFrame> | null = null;
+  let streamContentDirty = false;
+
   function triggerStreamRender() {
     streamContentDirty = true;
     if (streamRenderTimer) return;

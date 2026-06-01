@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
 import type { StoredProvider } from '../utils/storage';
 import type { Language } from '../utils/i18n';
 import { t as i18n } from '../utils/i18n';
@@ -18,6 +18,7 @@ const emit = defineEmits<{
 
 const isOpen = ref(false);
 const searchQuery = ref('');
+const wrapperRef = ref<HTMLElement | null>(null);
 
 function toggle() {
   isOpen.value = !isOpen.value;
@@ -27,6 +28,14 @@ function toggle() {
 function close() {
   isOpen.value = false;
   searchQuery.value = '';
+}
+
+function handleClickOutside(event: MouseEvent) {
+  if (!isOpen.value) return;
+  const target = event.target as Node;
+  if (wrapperRef.value && !wrapperRef.value.contains(target)) {
+    close();
+  }
 }
 
 function handleSelect(providerId: string, model: string) {
@@ -74,11 +83,19 @@ const groupedModelOptions = computed(() => {
   return groups;
 });
 
+onMounted(() => {
+  document.addEventListener('click', handleClickOutside, true);
+});
+
+onUnmounted(() => {
+  document.removeEventListener('click', handleClickOutside, true);
+});
+
 defineExpose({ toggle, close, isOpen });
 </script>
 
 <template>
-  <div class="model-selector-wrapper">
+  <div class="model-selector-wrapper" ref="wrapperRef">
     <button class="model-selector-btn" @click="toggle" :aria-label="'Select model: ' + activeModelName" aria-haspopup="listbox">
       <span class="model-name">{{ activeModelName }}</span>
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -96,7 +113,7 @@ defineExpose({ toggle, close, isOpen });
           v-model="searchQuery"
           type="text"
           class="model-search-input"
-          placeholder="Search models..."
+          :placeholder="i18n(language, 'model.searchPlaceholder')"
           @click.stop
         />
       </div>
@@ -121,7 +138,7 @@ defineExpose({ toggle, close, isOpen });
         </template>
       </div>
       <div v-if="filteredModelOptions.length === 0" class="model-option-empty">
-        {{ allModelOptions.length === 0 ? i18n(language, 'model.noModels') : 'No matching models' }}
+        {{ allModelOptions.length === 0 ? i18n(language, 'model.noModels') : i18n(language, 'model.noMatchingModels') }}
       </div>
     </div>
   </div>

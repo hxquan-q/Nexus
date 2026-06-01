@@ -6,8 +6,6 @@
 import { storage } from '@wxt-dev/storage';
 import type { McpServer, McpAuthType } from './mcp';
 
-export type { McpServer, McpAuthType };
-
 // ============================================================
 // Storage
 // ============================================================

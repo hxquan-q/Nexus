@@ -18,7 +18,8 @@ const emit = defineEmits<{
   (e: 'load-more'): void;
   (e: 'search', query: string): void;
   (e: 'rename', id: string, title: string): void;
-  (e: 'export'): void;
+  (e: 'export-markdown'): void;
+  (e: 'export-html'): void;
   (e: 'import', event: Event): void;
   (e: 'new-chat'): void;
   (e: 'close'): void;
@@ -209,7 +210,8 @@ function cancelRename() {
       {{ i18n(language, 'history.newChat') }}
     </button>
     <div class="history-actions-row">
-      <button class="history-action-btn" @click="emit('export')" :disabled="!currentSessionId">{{ i18n(language, 'history.export') }}</button>
+      <button class="history-action-btn" @click="emit('export-markdown')" :disabled="!currentSessionId">{{ i18n(language, 'history.exportMd') }}</button>
+      <button class="history-action-btn" @click="emit('export-html')" :disabled="!currentSessionId">{{ i18n(language, 'history.exportHtml') }}</button>
       <label class="history-action-btn">
         {{ i18n(language, 'history.import') }}
         <input type="file" accept=".json" style="display: none" @change="(e) => emit('import', e)" />

@@ -260,48 +260,137 @@ function sessionToMarkdown(session: ChatSession): string {
   const lines: string[] = [];
   lines.push(`# ${session.title}`);
   lines.push('');
-  lines.push(`> Exported from Nexus on ${new Date().toLocaleString()}`);
+  const dateStr = new Date(session.createdAt).toLocaleString();
+  lines.push(`**Date:** ${dateStr}`);
+  if (session.providerId) {
+    lines.push(`**Provider:** ${session.providerId}`);
+  }
+  lines.push('');
+  lines.push('---');
   lines.push('');
 
   for (const msg of session.messages) {
+    if (msg.content?.startsWith('__ERROR__:')) continue;
+
     const role = msg.role === 'user' ? 'User' : msg.role === 'assistant' ? 'Assistant' : 'System';
     const timestamp = new Date(msg.timestamp).toLocaleString();
-    lines.push(`## ${role} (${timestamp})`);
+    lines.push(`## ${role}`);
+    lines.push(`*${timestamp}*`);
     lines.push('');
 
-    // Replace image references with placeholder
-    let content = msg.content || '';
+    // Images
     if (msg.images && msg.images.length > 0) {
       for (const img of msg.images) {
-        lines.push(`[image: ${img.name}]`);
+        lines.push(`![${img.name}](${img.name})`);
       }
       lines.push('');
     }
 
-    lines.push(content);
+    // File attachments
+    if (msg.fileAttachments && msg.fileAttachments.length > 0) {
+      for (const file of msg.fileAttachments) {
+        lines.push(`*Attached: ${file.name}*`);
+      }
+      lines.push('');
+    }
+
+    // Quote
+    if (msg.quote) {
+      lines.push(`> ${msg.quote}`);
+      lines.push('');
+    }
+
+    // For user messages with file content, show only the display part
+    let content = msg.content || '';
+    if (msg.role === 'user' && msg.fileAttachments && msg.fileAttachments.length > 0) {
+      const separatorIndex = content.indexOf('\n\n---\n\n');
+      if (separatorIndex !== -1) {
+        content = content.substring(0, separatorIndex).trim();
+      }
+    }
+
+    if (content.trim()) {
+      lines.push(content);
+    }
     lines.push('');
     lines.push('---');
     lines.push('');
   }
 
+  lines.push('');
+  lines.push(`> Exported from Nexus on ${new Date().toLocaleString()}`);
+
   return lines.join('\n');
 }
 
 function sessionToHtml(session: ChatSession): string {
-  const messagesHtml = session.messages.map((msg) => {
-    const role = msg.role === 'user' ? 'User' : msg.role === 'assistant' ? 'Assistant' : 'System';
-    const roleClass = msg.role === 'user' ? 'user' : 'assistant';
-    const timestamp = new Date(msg.timestamp).toLocaleString();
-    const content = escapeHtml(msg.content || '');
+  const messagesHtml = session.messages
+    .filter((msg) => !msg.content?.startsWith('__ERROR__:'))
+    .map((msg) => {
+      const role = msg.role === 'user' ? 'User' : msg.role === 'assistant' ? 'Assistant' : 'System';
+      const roleClass = msg.role === 'user' ? 'user' : 'assistant';
+      const timestamp = new Date(msg.timestamp).toLocaleString();
 
-    return `<div class="message ${roleClass}">
+      let content = escapeHtml(msg.content || '');
+
+      // For user messages with file content, show only the display part
+      if (msg.role === 'user' && msg.fileAttachments && msg.fileAttachments.length > 0) {
+        const separatorIndex = content.indexOf('\n\n---\n\n');
+        if (separatorIndex !== -1) {
+          content = content.substring(0, separatorIndex).trim();
+        }
+      }
+
+      // Convert markdown-style formatting to HTML for better rendering
+      content = content
+        // Code blocks
+        .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code class="language-$1">$2</code></pre>')
+        // Inline code
+        .replace(/`([^`]+)`/g, '<code>$1</code>')
+        // Bold
+        .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+        // Italic
+        .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+        // Headers
+        .replace(/^### (.+)$/gm, '<h4>$1</h4>')
+        .replace(/^## (.+)$/gm, '<h3>$1</h3>')
+        .replace(/^# (.+)$/gm, '<h2>$1</h2>')
+        // Line breaks (after other replacements)
+        .replace(/\n/g, '<br>');
+
+      // Images
+      let imagesHtml = '';
+      if (msg.images && msg.images.length > 0) {
+        imagesHtml = '<div class="message-images">' +
+          msg.images.map((img) => `<img src="${escapeHtml(img.dataUrl)}" alt="${escapeHtml(img.name)}" class="chat-image" />`).join('') +
+          '</div>';
+      }
+
+      // File attachments
+      let filesHtml = '';
+      if (msg.fileAttachments && msg.fileAttachments.length > 0) {
+        filesHtml = '<div class="message-files">' +
+          msg.fileAttachments.map((f) => `<span class="file-chip">${escapeHtml(f.name)}</span>`).join('') +
+          '</div>';
+      }
+
+      // Quote
+      let quoteHtml = '';
+      if (msg.quote) {
+        quoteHtml = `<blockquote class="message-quote">${escapeHtml(msg.quote)}</blockquote>`;
+      }
+
+      return `<div class="message ${roleClass}">
   <div class="message-header">
     <span class="message-role">${role}</span>
     <span class="message-time">${timestamp}</span>
   </div>
-  <div class="message-content">${content.replace(/\n/g, '<br>')}</div>
+  ${imagesHtml}${filesHtml}${quoteHtml}
+  <div class="message-content">${content}</div>
 </div>`;
-  }).join('\n');
+    }).join('\n');
+
+  const dateStr = new Date(session.createdAt).toLocaleString();
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -317,19 +406,165 @@ function sessionToHtml(session: ChatSession): string {
       color: #1d1d1f;
       max-width: 800px;
       margin: 0 auto;
-      padding: 24px;
+      padding: 32px 24px;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
     }
-    h1 { font-size: 20px; font-weight: 600; margin-bottom: 24px; }
-    .message { margin-bottom: 16px; border-radius: 12px; padding: 16px; }
-    .user { background: #007aff; color: white; }
-    .assistant { background: #f0f0f5; }
-    .message-header { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 13px; opacity: 0.8; }
-    .message-content { font-size: 15px; line-height: 1.5; white-space: pre-wrap; }
+    @media print {
+      body { padding: 0; max-width: 100%; }
+      .message { break-inside: avoid; }
+    }
+    @media (max-width: 640px) {
+      body { padding: 16px; }
+      .message { padding: 12px; border-radius: 14px; }
+    }
+    .session-header {
+      text-align: center;
+      margin-bottom: 32px;
+      padding-bottom: 24px;
+      border-bottom: 1px solid #d2d2d7;
+    }
+    h1 {
+      font-size: 28px;
+      font-weight: 700;
+      color: #1d1d1f;
+      margin-bottom: 8px;
+      letter-spacing: -0.5px;
+    }
+    .session-meta {
+      font-size: 14px;
+      color: #86868b;
+    }
+    .message {
+      margin-bottom: 20px;
+      border-radius: 18px;
+      padding: 16px 20px;
+      max-width: 85%;
+      animation: fadeIn 0.3s ease;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .user {
+      background: #007aff;
+      color: white;
+      margin-left: auto;
+      border-bottom-right-radius: 4px;
+    }
+    .assistant {
+      background: #ffffff;
+      color: #1d1d1f;
+      border: 1px solid #e5e5ea;
+      margin-right: auto;
+      border-bottom-left-radius: 4px;
+    }
+    .message-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+      font-size: 12px;
+      opacity: 0.7;
+    }
+    .user .message-role {
+      font-weight: 600;
+      color: rgba(255,255,255,0.9);
+    }
+    .assistant .message-role {
+      font-weight: 600;
+      color: #86868b;
+    }
+    .message-time { font-variant-numeric: tabular-nums; }
+    .message-content {
+      font-size: 15px;
+      line-height: 1.65;
+      word-wrap: break-word;
+      overflow-wrap: break-word;
+    }
+    .message-content h2 { font-size: 18px; font-weight: 600; margin: 16px 0 8px; }
+    .message-content h3 { font-size: 16px; font-weight: 600; margin: 14px 0 6px; }
+    .message-content h4 { font-size: 15px; font-weight: 600; margin: 12px 0 4px; }
+    .message-content code {
+      font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', Menlo, monospace;
+      font-size: 13px;
+      background: rgba(0,0,0,0.06);
+      padding: 2px 6px;
+      border-radius: 6px;
+    }
+    .user .message-content code {
+      background: rgba(255,255,255,0.2);
+    }
+    .message-content pre {
+      background: #1d1d1f;
+      color: #f5f5f7;
+      border-radius: 12px;
+      padding: 16px;
+      margin: 12px 0;
+      overflow-x: auto;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .message-content pre code {
+      background: none;
+      padding: 0;
+      color: inherit;
+      font-size: 13px;
+    }
+    .message-images {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .chat-image {
+      max-width: 240px;
+      max-height: 200px;
+      border-radius: 10px;
+      object-fit: cover;
+    }
+    .message-files {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 12px;
+    }
+    .file-chip {
+      display: inline-block;
+      padding: 3px 10px;
+      background: rgba(0,0,0,0.06);
+      border-radius: 20px;
+      font-size: 12px;
+    }
+    .user .file-chip { background: rgba(255,255,255,0.2); }
+    .message-quote {
+      border-left: 3px solid #d2d2d7;
+      padding: 4px 12px;
+      margin: 8px 0 12px;
+      font-style: italic;
+      color: #86868b;
+    }
+    .user .message-quote {
+      border-left-color: rgba(255,255,255,0.4);
+      color: rgba(255,255,255,0.8);
+    }
+    .footer {
+      text-align: center;
+      margin-top: 40px;
+      padding-top: 20px;
+      border-top: 1px solid #d2d2d7;
+      font-size: 12px;
+      color: #86868b;
+    }
   </style>
 </head>
 <body>
-  <h1>${escapeHtml(session.title)}</h1>
+  <div class="session-header">
+    <h1>${escapeHtml(session.title)}</h1>
+    <div class="session-meta">${dateStr}</div>
+  </div>
   ${messagesHtml}
+  <div class="footer">Exported from Nexus on ${new Date().toLocaleString()}</div>
 </body>
 </html>`;
 }

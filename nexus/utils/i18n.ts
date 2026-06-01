@@ -22,6 +22,8 @@ const translations: Record<Language, Record<TranslationKey, string>> = {
 
     // ===== Model Selector =====
     'model.noModels': 'No models configured. Open Settings to add a provider.',
+    'model.noMatchingModels': 'No matching models',
+    'model.searchPlaceholder': 'Search models...',
     'model.notConfigured': 'Not configured',
 
     // ===== Empty State =====
@@ -98,6 +100,8 @@ const translations: Record<Language, Record<TranslationKey, string>> = {
     'history.delete': 'Delete chat',
     'history.deleteConfirm': 'Delete this chat?',
     'history.export': 'Export',
+    'history.exportMd': 'Markdown',
+    'history.exportHtml': 'HTML',
     'history.import': 'Import',
     'history.exportCurrent': 'Export current chat',
     'history.exportAll': 'Export all chats',
@@ -173,6 +177,8 @@ const translations: Record<Language, Record<TranslationKey, string>> = {
     'providers.model': 'Model',
     'providers.none': 'None',
     'providers.noProviders': 'No providers configured. Add one to get started.',
+    'providers.configured': 'Configured',
+    'providers.incomplete': 'Incomplete configuration',
 
     // ===== Options: Appearance =====
     'appearance.title': 'Appearance',
@@ -324,6 +330,8 @@ const translations: Record<Language, Record<TranslationKey, string>> = {
 
     // ===== Model Selector =====
     'model.noModels': '未配置模型，请在设置中添加供应商。',
+    'model.noMatchingModels': '没有匹配的模型',
+    'model.searchPlaceholder': '搜索模型...',
     'model.notConfigured': '未配置',
 
     // ===== Empty State =====
@@ -400,6 +408,8 @@ const translations: Record<Language, Record<TranslationKey, string>> = {
     'history.delete': '删除对话',
     'history.deleteConfirm': '确认删除此对话？',
     'history.export': '导出',
+    'history.exportMd': 'Markdown',
+    'history.exportHtml': 'HTML',
     'history.import': '导入',
     'history.exportCurrent': '导出当前对话',
     'history.exportAll': '导出全部对话',
@@ -475,6 +485,8 @@ const translations: Record<Language, Record<TranslationKey, string>> = {
     'providers.model': '模型',
     'providers.none': '无',
     'providers.noProviders': '未配置供应商，请添加以开始使用。',
+    'providers.configured': '已配置',
+    'providers.incomplete': '配置不完整',
 
     // ===== Options: Appearance =====
     'appearance.title': '外观',

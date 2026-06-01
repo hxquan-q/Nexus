@@ -1313,6 +1313,16 @@ async function handleExportCurrentSession() {
   }
 }
 
+async function handleExportCurrentSessionAsHtml() {
+  if (!currentSession.value) return;
+  try {
+    const { downloadAsHtml } = await import('../../utils/chatImportExport');
+    downloadAsHtml(currentSession.value);
+  } catch (error) {
+    console.error('Export failed:', error);
+  }
+}
+
 async function handleImportSession(event: Event) {
   const input = event.target as HTMLInputElement;
   const file = input.files?.[0];
@@ -1908,7 +1918,8 @@ onUnmounted(() => {
         @delete="removeSession"
         @load-more="loadMoreSessions"
         @rename="renameSession"
-        @export="handleExportCurrentSession"
+        @export-markdown="handleExportCurrentSession"
+        @export-html="handleExportCurrentSessionAsHtml"
         @import="handleImportSession"
         @new-chat="newChat"
         @close="showHistory = false"
