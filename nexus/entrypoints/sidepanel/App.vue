@@ -1538,6 +1538,16 @@ async function handleExportCurrentSessionAsHtml() {
   }
 }
 
+async function handleExportCurrentSessionAsImage() {
+  if (!currentSession.value) return;
+  try {
+    const { exportAsImage } = await import('../../utils/chatImportExport');
+    exportAsImage(currentSession.value);
+  } catch (error) {
+    console.error('Export as image failed:', error);
+  }
+}
+
 async function handleImportSession(event: Event) {
   const input = event.target as HTMLInputElement;
   const file = input.files?.[0];
@@ -2143,6 +2153,7 @@ onUnmounted(() => {
           :has-session="!!currentSession && messages.length > 0"
           @share-chat="shareChatAsMarkdown"
           @export-chat="handleExportCurrentSession"
+          @export-as-image="handleExportCurrentSessionAsImage"
           @search="showSearch = true"
           @pop-out="popOutChat"
           @clear-chat="clearCurrentChat"
@@ -2407,6 +2418,7 @@ onUnmounted(() => {
           @rename="renameSession"
           @export-markdown="handleExportCurrentSession"
           @export-html="handleExportCurrentSessionAsHtml"
+          @export-image="handleExportCurrentSessionAsImage"
           @import="handleImportSession"
           @new-chat="newChat"
           @close="showHistory = false"

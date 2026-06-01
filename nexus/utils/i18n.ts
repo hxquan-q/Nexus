@@ -104,6 +104,7 @@ const translations: Record<Language, Record<TranslationKey, string>> = {
     'history.export': 'Export',
     'history.exportMd': 'Markdown',
     'history.exportHtml': 'HTML',
+    'history.exportImage': 'Image',
     'history.import': 'Import',
     'history.exportCurrent': 'Export current chat',
     'history.exportAll': 'Export all chats',
@@ -397,6 +398,7 @@ const translations: Record<Language, Record<TranslationKey, string>> = {
     // ===== Header Menu =====
     'menu.shareChat': 'Copy as Markdown',
     'menu.exportChat': 'Export Chat',
+    'menu.exportAsImage': 'Export as Image',
     'menu.searchChat': 'Find in Chat',
     'menu.popOut': 'Pop Out Window',
     'menu.clearChat': 'Clear Conversation',
@@ -532,6 +534,7 @@ const translations: Record<Language, Record<TranslationKey, string>> = {
     'history.export': '导出',
     'history.exportMd': 'Markdown',
     'history.exportHtml': 'HTML',
+    'history.exportImage': '图片',
     'history.import': '导入',
     'history.exportCurrent': '导出当前对话',
     'history.exportAll': '导出全部对话',
@@ -825,6 +828,7 @@ const translations: Record<Language, Record<TranslationKey, string>> = {
     // ===== Header Menu =====
     'menu.shareChat': '复制为 Markdown',
     'menu.exportChat': '导出对话',
+    'menu.exportAsImage': '导出为图片',
     'menu.searchChat': '在对话中查找',
     'menu.popOut': '弹出窗口',
     'menu.clearChat': '清除对话',

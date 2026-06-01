@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.1] - 2026-06-02
+
+### Added
+- "Export as Image" feature: opens a clean, branded shareable HTML page for the current conversation
+  - Available from header menu and history panel
+  - Clean card layout with Nexus branding, avatars, and message bubbles
+  - Print / Save as PDF button for capturing as image
+  - Works with all message types: text, images, code, file attachments, quotes
+
+### Changed
+- Version bumped to 0.3.1
+
 ## [0.3.0] - 2026-06-02
 
 ### Added

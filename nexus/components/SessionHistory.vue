@@ -20,6 +20,7 @@ const emit = defineEmits<{
   (e: 'rename', id: string, title: string): void;
   (e: 'export-markdown'): void;
   (e: 'export-html'): void;
+  (e: 'export-image'): void;
   (e: 'import', event: Event): void;
   (e: 'new-chat'): void;
   (e: 'close'): void;
@@ -253,12 +254,13 @@ function cancelRename() {
     <div class="history-actions-row">
       <button class="history-action-btn" @click="emit('export-markdown')" :disabled="!currentSessionId">{{ i18n(language, 'history.exportMd') }}</button>
       <button class="history-action-btn" @click="emit('export-html')" :disabled="!currentSessionId">{{ i18n(language, 'history.exportHtml') }}</button>
+      <button class="history-action-btn" @click="emit('export-image')" :disabled="!currentSessionId">{{ i18n(language, 'history.exportImage') }}</button>
       <label class="history-action-btn">
         {{ i18n(language, 'history.import') }}
         <input type="file" accept=".json" style="display: none" @change="(e) => emit('import', e)" />
       </label>
     </div>
-    <div class="history-footer">Nexus v0.3.0</div>
+    <div class="history-footer">Nexus v0.3.1</div>
   </div>
 </template>
 

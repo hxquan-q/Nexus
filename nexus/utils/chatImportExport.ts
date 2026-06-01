@@ -569,6 +569,346 @@ function sessionToHtml(session: ChatSession): string {
 </html>`;
 }
 
+/**
+ * Export a session as a shareable image-like HTML page.
+ * Opens a clean, branded page in a new tab that the user can
+ * screenshot, print-to-PDF, or share.
+ */
+export function exportAsImage(session: ChatSession): void {
+  const html = sessionToShareableHtml(session);
+  const blob = new Blob([html], { type: 'text/html' });
+  const url = URL.createObjectURL(blob);
+
+  // Open in a new tab for screenshot / print
+  const newTab = window.open(url, '_blank');
+  if (!newTab) {
+    // Fallback: trigger download if popup blocked
+    triggerDownload(blob, `${sanitizeFilename(session.title)}-share.html`);
+  } else {
+    // Revoke after a delay so the page has time to load
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+  }
+}
+
+function sessionToShareableHtml(session: ChatSession): string {
+  const messagesHtml = session.messages
+    .filter((msg) => !msg.content?.startsWith('__ERROR__:'))
+    .map((msg) => {
+      const role = msg.role === 'user' ? 'You' : 'Nexus';
+      const roleClass = msg.role === 'user' ? 'user' : 'assistant';
+
+      let content = escapeHtml(msg.content || '');
+
+      // For user messages with file content, show only the display part
+      if (msg.role === 'user' && msg.fileAttachments && msg.fileAttachments.length > 0) {
+        const separatorIndex = content.indexOf('\n\n---\n\n');
+        if (separatorIndex !== -1) {
+          content = content.substring(0, separatorIndex).trim();
+        }
+      }
+
+      // Convert markdown-style formatting to HTML
+      content = content
+        .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code class="language-$1">$2</code></pre>')
+        .replace(/`([^`]+)`/g, '<code>$1</code>')
+        .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+        .replace(/^### (.+)$/gm, '<h4>$1</h4>')
+        .replace(/^## (.+)$/gm, '<h3>$1</h3>')
+        .replace(/^# (.+)$/gm, '<h2>$1</h2>')
+        .replace(/\n/g, '<br>');
+
+      // Images
+      let imagesHtml = '';
+      if (msg.images && msg.images.length > 0) {
+        imagesHtml = '<div class="msg-images">' +
+          msg.images.map((img) => `<img src="${escapeHtml(img.dataUrl)}" alt="${escapeHtml(img.name)}" class="chat-img" />`).join('') +
+          '</div>';
+      }
+
+      // File attachments
+      let filesHtml = '';
+      if (msg.fileAttachments && msg.fileAttachments.length > 0) {
+        filesHtml = '<div class="msg-files">' +
+          msg.fileAttachments.map((f) => `<span class="file-badge">${escapeHtml(f.name)}</span>`).join('') +
+          '</div>';
+      }
+
+      // Quote
+      let quoteHtml = '';
+      if (msg.quote) {
+        quoteHtml = `<blockquote class="msg-quote">${escapeHtml(msg.quote)}</blockquote>`;
+      }
+
+      return `<div class="msg ${roleClass}">
+  <div class="msg-avatar">${role === 'You' ? '&#128100;' : '&#10024;'}</div>
+  <div class="msg-body">
+    <div class="msg-role">${role}</div>
+    ${imagesHtml}${filesHtml}${quoteHtml}
+    <div class="msg-content">${content}</div>
+  </div>
+</div>`;
+    }).join('\n');
+
+  const dateStr = new Date(session.createdAt).toLocaleString();
+  const exportDate = new Date().toLocaleString();
+  const msgCount = session.messages.filter((m) => !m.content?.startsWith('__ERROR__:')).length;
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${escapeHtml(session.title)} - Nexus Share</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: #ffffff;
+      color: #1d1d1f;
+      max-width: 680px;
+      margin: 0 auto;
+      padding: 40px 24px 80px;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+    @media print {
+      body { padding: 20px; }
+      .print-bar { display: none; }
+      .msg { break-inside: avoid; }
+    }
+
+    /* Print / action bar */
+    .print-bar {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: #f5f5f7;
+      border-top: 1px solid #d2d2d7;
+      padding: 12px 24px;
+      display: flex;
+      justify-content: center;
+      gap: 12px;
+      z-index: 10;
+    }
+    .print-bar button {
+      padding: 8px 20px;
+      border: none;
+      border-radius: 20px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      font-family: inherit;
+    }
+    .btn-print {
+      background: #007aff;
+      color: #fff;
+    }
+    .btn-print:hover {
+      background: #0056b3;
+    }
+    .btn-close {
+      background: #e5e5ea;
+      color: #1d1d1f;
+    }
+    .btn-close:hover {
+      background: #d1d1d6;
+    }
+
+    /* Header */
+    .share-header {
+      text-align: center;
+      margin-bottom: 40px;
+      padding-bottom: 28px;
+      border-bottom: 1px solid #e5e5ea;
+    }
+    .share-brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .share-brand-icon {
+      width: 36px;
+      height: 36px;
+      background: linear-gradient(135deg, #007aff, #5856d6);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .share-brand-icon svg {
+      display: block;
+    }
+    .share-brand-name {
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      background: linear-gradient(135deg, #007aff, #5856d6);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .share-title {
+      font-size: 24px;
+      font-weight: 700;
+      color: #1d1d1f;
+      letter-spacing: -0.3px;
+      margin-bottom: 8px;
+    }
+    .share-meta {
+      font-size: 13px;
+      color: #86868b;
+    }
+
+    /* Messages */
+    .msg {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 24px;
+      animation: msg-in 0.3s ease both;
+    }
+    @keyframes msg-in {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .msg-avatar {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      flex-shrink: 0;
+      background: #f5f5f7;
+    }
+    .assistant .msg-avatar {
+      background: linear-gradient(135deg, #007aff20, #5856d620);
+    }
+    .msg-body {
+      flex: 1;
+      min-width: 0;
+    }
+    .msg-role {
+      font-size: 13px;
+      font-weight: 600;
+      color: #86868b;
+      margin-bottom: 4px;
+    }
+    .user .msg-role { color: #007aff; }
+    .msg-content {
+      font-size: 15px;
+      line-height: 1.65;
+      word-wrap: break-word;
+      overflow-wrap: break-word;
+    }
+    .msg-content h2 { font-size: 18px; font-weight: 600; margin: 16px 0 8px; }
+    .msg-content h3 { font-size: 16px; font-weight: 600; margin: 14px 0 6px; }
+    .msg-content h4 { font-size: 15px; font-weight: 600; margin: 12px 0 4px; }
+    .msg-content code {
+      font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', Menlo, monospace;
+      font-size: 13px;
+      background: #f5f5f7;
+      padding: 2px 6px;
+      border-radius: 6px;
+    }
+    .msg-content pre {
+      background: #1d1d1f;
+      color: #f5f5f7;
+      border-radius: 12px;
+      padding: 16px;
+      margin: 12px 0;
+      overflow-x: auto;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .msg-content pre code {
+      background: none;
+      padding: 0;
+      color: inherit;
+    }
+    .msg-images {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .chat-img {
+      max-width: 220px;
+      max-height: 180px;
+      border-radius: 10px;
+      object-fit: cover;
+    }
+    .msg-files {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 12px;
+    }
+    .file-badge {
+      display: inline-block;
+      padding: 3px 10px;
+      background: #f5f5f7;
+      border-radius: 20px;
+      font-size: 12px;
+      color: #86868b;
+    }
+    .msg-quote {
+      border-left: 3px solid #d2d2d7;
+      padding: 4px 12px;
+      margin: 8px 0 12px;
+      font-style: italic;
+      color: #86868b;
+    }
+
+    /* Footer */
+    .share-footer {
+      text-align: center;
+      margin-top: 48px;
+      padding-top: 20px;
+      border-top: 1px solid #e5e5ea;
+      font-size: 12px;
+      color: #86868b;
+    }
+
+    @media (max-width: 640px) {
+      body { padding: 24px 16px 80px; }
+      .share-title { font-size: 20px; }
+      .msg { gap: 8px; }
+      .msg-avatar { width: 28px; height: 28px; font-size: 14px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="share-header">
+    <div class="share-brand">
+      <div class="share-brand-icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2">
+          <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+          <path d="M2 17l10 5 10-5"/>
+          <path d="M2 12l10 5 10-5"/>
+        </svg>
+      </div>
+      <span class="share-brand-name">Nexus</span>
+    </div>
+    <h1 class="share-title">${escapeHtml(session.title)}</h1>
+    <div class="share-meta">${dateStr} &middot; ${msgCount} messages</div>
+  </div>
+  ${messagesHtml}
+  <div class="share-footer">
+    Shared from Nexus &middot; ${exportDate}
+  </div>
+  <div class="print-bar">
+    <button class="btn-print" onclick="window.print()">Print / Save as PDF</button>
+    <button class="btn-close" onclick="window.close()">Close</button>
+  </div>
+</body>
+</html>`;
+}
+
 function escapeHtml(text: string): string {
   return text
     .replace(/&/g, '&amp;')

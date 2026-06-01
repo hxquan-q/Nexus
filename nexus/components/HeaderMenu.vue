@@ -12,6 +12,7 @@ const emit = defineEmits<{
   (e: 'close'): void;
   (e: 'share-chat'): void;
   (e: 'export-chat'): void;
+  (e: 'export-as-image'): void;
   (e: 'clear-chat'): void;
   (e: 'pop-out'): void;
   (e: 'search'): void;
@@ -30,6 +31,7 @@ function handleItemClick(action: string): void {
   switch (action) {
     case 'share': emit('share-chat'); break;
     case 'export': emit('export-chat'); break;
+    case 'export-image': emit('export-as-image'); break;
     case 'clear': emit('clear-chat'); break;
     case 'popout': emit('pop-out'); break;
     case 'search': emit('search'); break;
@@ -95,6 +97,14 @@ onUnmounted(() => {
             <line x1="12" y1="15" x2="12" y2="3"/>
           </svg>
           <span>{{ i18n(language, 'menu.exportChat') }}</span>
+        </button>
+        <button class="menu-item" @click="handleItemClick('export-image')" :disabled="!hasSession">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+            <circle cx="8.5" cy="8.5" r="1.5"/>
+            <polyline points="21 15 16 10 5 21"/>
+          </svg>
+          <span>{{ i18n(language, 'menu.exportAsImage') }}</span>
         </button>
         <button class="menu-item" @click="handleItemClick('search')" :disabled="!hasSession">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
