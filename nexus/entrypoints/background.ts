@@ -334,32 +334,7 @@ export default defineBackground(() => {
         return true;
       }
 
-      case 'STREAM_END': {
-        handleAsyncMessage(
-          async () => {
-            await setInProgressState(null);
-            stopKeepalive();
-            clearBadge();
-            return { ok: true };
-          },
-          sendResponse,
-        );
-        return true;
-      }
-
-      case 'STREAMING_START': {
-        handleAsyncMessage(
-          async () => {
-            startKeepalive();
-            await setInProgressState({ isStreaming: true, sessionId: message.sessionId, timestamp: Date.now() });
-            setBadge('...', '#007AFF');
-            return { ok: true };
-          },
-          sendResponse,
-        );
-        return true;
-      }
-
+      case 'STREAM_END':
       case 'STREAMING_END': {
         handleAsyncMessage(
           async () => {

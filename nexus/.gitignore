@@ -11,6 +11,11 @@ node_modules
 .wxt
 web-ext.config.ts
 
+# Build artifacts
+*.crx
+*.pem
+*.zip
+
 # Editor directories and files
 .vscode/*
 .idea

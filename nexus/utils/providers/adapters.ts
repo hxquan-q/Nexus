@@ -87,21 +87,3 @@ export function isOpenAICompatible(type: ProviderType): boolean {
   // Everything else either is OpenAI or has an OpenAI-compatible proxy
   return type !== 'gemini-web';
 }
-
-/**
- * Get provider display name by type.
- */
-export function getProviderTypeName(type: ProviderType): string {
-  const names: Record<ProviderType, string> = {
-    openai: 'OpenAI',
-    anthropic: 'Anthropic',
-    gemini: 'Gemini',
-    'gemini-web': 'Gemini Web',
-    deepseek: 'DeepSeek',
-    openrouter: 'OpenRouter',
-    qwen: 'Qwen',
-    zhipu: 'Zhipu',
-    custom: 'Custom',
-  };
-  return names[type] || type;
-}

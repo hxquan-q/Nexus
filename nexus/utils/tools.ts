@@ -275,9 +275,3 @@ export function isBrowserControlTool(name: string): boolean {
   return BROWSER_CONTROL_TOOLS.some((t) => t.name === name);
 }
 
-/**
- * Check if a tool name is an extraction tool (runs without CDP).
- */
-export function isExtractionTool(name: string): boolean {
-  return name === 'extract_page_content' || name === 'extract_youtube_transcript';
-}

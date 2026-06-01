@@ -190,26 +190,6 @@ export async function deleteSession(id: string): Promise<void> {
   }
 }
 
-/**
- * Search sessions by title and message content.
- * Returns matching sessions sorted by updatedAt descending.
- */
-export async function searchSessions(query: string): Promise<ChatSession[]> {
-  if (!query.trim()) return getAllSessions();
-
-  const allSessions = await getAllSessions();
-  const lowerQuery = query.toLowerCase();
-
-  return allSessions.filter((s) => {
-    // Match title
-    if (s.title.toLowerCase().includes(lowerQuery)) return true;
-    // Match message content
-    return s.messages.some((m) =>
-      m.content?.toLowerCase().includes(lowerQuery)
-    );
-  });
-}
-
 export async function generateSessionTitle(firstMessage: string): Promise<string> {
   let title = firstMessage.replace(/\n/g, ' ').trim();
 
