@@ -141,6 +141,12 @@ const renderer = {
     // Regular code block with syntax highlighting
     const highlighted = highlightCode(normalizedCode, language);
 
+    // Build line numbers
+    const lineCount = normalizedCode.split('\n').length;
+    const lineNumbers = Array.from({ length: lineCount }, (_, i) =>
+      `<span class="hljs-ln-num">${i + 1}</span>`
+    ).join('\n');
+
     return `
       <div class="markdown-code-block">
         <div class="markdown-code-toolbar">
@@ -182,7 +188,10 @@ const renderer = {
             </button>
           </div>
         </div>
-        <pre><code class="hljs">${highlighted}</code></pre>
+        <div class="markdown-code-body">
+          <div class="hljs-line-numbers">${lineNumbers}</div>
+          <pre><code class="hljs">${highlighted}</code></pre>
+        </div>
       </div>
     `;
   },

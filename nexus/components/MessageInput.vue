@@ -49,8 +49,17 @@ const emit = defineEmits<{
 const textareaRef = ref<HTMLTextAreaElement | null>(null);
 const isInputComposing = ref(false);
 const isImageDragActive = ref(false);
+const isFocused = ref(false);
 const text = ref('');
 const expandedPresets = ref(false);
+
+const showCharCount = computed(() => text.value.length > 500);
+const charCount = computed(() => text.value.length);
+
+const shortcutHint = computed(() => {
+  if (text.value.length > 0 || isFocused.value) return '';
+  return i18n(props.language, 'input.shortcutHint');
+});
 
 const visiblePresets = computed(() => {
   if (props.isChatEmpty || expandedPresets.value) {
@@ -238,7 +247,7 @@ defineExpose({ textareaRef, text, focus: () => textareaRef.value?.focus() });
         ref="textareaRef"
         v-model="text"
         class="input-textarea"
-        :placeholder="hasActiveProvider ? i18n(language, 'input.placeholder') : i18n(language, 'input.placeholderNoProvider')"
+        :placeholder="hasActiveProvider ? (shortcutHint || i18n(language, 'input.placeholder')) : i18n(language, 'input.placeholderNoProvider')"
         rows="1"
         @keydown="handleKeydown"
         @compositionstart="handleCompositionStart"
@@ -248,6 +257,8 @@ defineExpose({ textareaRef, text, focus: () => textareaRef.value?.focus() });
         @dragover="handleDragOver"
         @dragleave="handleDragLeave"
         @drop="handleDrop"
+        @focus="isFocused = true"
+        @blur="isFocused = false"
       ></textarea>
 
       <button
@@ -276,6 +287,8 @@ defineExpose({ textareaRef, text, focus: () => textareaRef.value?.focus() });
         </svg>
       </button>
     </div>
+    <!-- Character count -->
+    <div v-if="showCharCount" class="char-count">{{ charCount.toLocaleString() }}</div>
   </div>
 </template>
 
@@ -630,5 +643,16 @@ defineExpose({ textareaRef, text, focus: () => textareaRef.value?.focus() });
 @keyframes stop-pulse {
   0%, 100% { transform: scale(1); opacity: 0.5; }
   50% { transform: scale(1.3); opacity: 0; }
+}
+
+/* Character count */
+.char-count {
+  text-align: right;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  opacity: 0.6;
+  padding: 0 var(--spacing-md) 0 0;
+  margin-top: 2px;
+  transition: opacity var(--transition-fast);
 }
 </style>

@@ -153,6 +153,7 @@ const isUser = computed(() => props.message.role === 'user');
               :src="image.dataUrl"
               :alt="image.name"
               class="message-image"
+              loading="lazy"
               @click="emit('open-lightbox', image.dataUrl)"
             />
           </div>

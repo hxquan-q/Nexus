@@ -872,6 +872,11 @@ onMounted(async () => {
 
         <div class="provider-list">
           <div v-if="providers.length === 0" class="empty-state">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="empty-state-icon">
+              <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+              <line x1="8" y1="21" x2="16" y2="21"/>
+              <line x1="12" y1="17" x2="12" y2="21"/>
+            </svg>
             <p>{{ i18n(currentLanguage, 'providers.noProviders') }}</p>
           </div>
 
@@ -972,6 +977,9 @@ onMounted(async () => {
               </div>
               <div v-if="fetchModelError" class="fetch-model-error">
                 {{ fetchModelError }}
+              </div>
+              <div v-if="formProvider.models.length === 0 && !fetchModelError" class="fetch-model-hint">
+                {{ i18n(currentLanguage, 'providers.noModelsHint') }}
               </div>
               <div class="manual-model-row">
                 <input
@@ -1181,6 +1189,11 @@ onMounted(async () => {
 
         <div class="provider-list">
           <div v-if="mcpServers.length === 0" class="empty-state">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="empty-state-icon">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="2" y1="12" x2="22" y2="12"/>
+              <path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/>
+            </svg>
             <p>{{ i18n(currentLanguage, 'mcp.noServers') }}</p>
           </div>
 
@@ -1276,6 +1289,9 @@ onMounted(async () => {
 
         <div class="provider-list">
           <div v-if="skills.length === 0" class="empty-state">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="empty-state-icon">
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+            </svg>
             <p>{{ i18n(currentLanguage, 'skills.noSkills') }}</p>
           </div>
 
@@ -1361,6 +1377,9 @@ onMounted(async () => {
 
         <div class="provider-list">
           <div v-if="presets.length === 0" class="empty-state">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="empty-state-icon">
+              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+            </svg>
             <p>{{ i18n(currentLanguage, 'presets.noPresets') }}</p>
           </div>
 
@@ -1639,6 +1658,7 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: var(--spacing-sm);
+  min-height: 60px;
 }
 
 .provider-card {
@@ -2266,6 +2286,24 @@ onMounted(async () => {
   padding: var(--spacing-xl);
   text-align: center;
   color: var(--color-text-secondary);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-sm);
+  animation: options-empty-fade 300ms ease;
+}
+
+@keyframes options-empty-fade {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.empty-state-icon {
+  opacity: 0.4;
+}
+
+.empty-state p {
+  font-size: var(--font-size-sm);
 }
 
 /* Toast notification */
@@ -2273,17 +2311,18 @@ onMounted(async () => {
   position: fixed;
   top: 20px;
   right: 20px;
-  padding: var(--spacing-sm) var(--spacing-md);
-  background: var(--color-bg-secondary);
+  padding: var(--spacing-sm) var(--spacing-lg);
+  background: var(--color-bg-primary);
   color: var(--color-text-primary);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-full);
   box-shadow: var(--shadow-lg);
   font-size: var(--font-size-sm);
   z-index: 500;
-  animation: options-toast-in 200ms ease, options-toast-out 200ms ease 1800ms forwards;
+  animation: options-toast-in 200ms ease, options-toast-out 200ms ease 2500ms forwards;
   max-width: 320px;
   pointer-events: none;
+  backdrop-filter: var(--blur-frost);
 }
 
 @keyframes options-toast-in {
@@ -2312,6 +2351,17 @@ onMounted(async () => {
   border-radius: var(--radius-sm);
   font-size: var(--font-size-xs);
   line-height: 1.4;
+}
+
+/* No models hint */
+.fetch-model-hint {
+  margin-top: var(--spacing-xs);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  font-style: italic;
 }
 
 /* Model tag with remove button */

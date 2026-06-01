@@ -68,6 +68,21 @@ const filteredModelOptions = computed(() => {
   );
 });
 
+function getProviderColor(providerId: string): string {
+  const provider = props.providers.find((p) => p.id === providerId);
+  if (!provider) return 'gray';
+  switch (provider.type) {
+    case 'openai': return '#34c759';
+    case 'anthropic': return '#ff9500';
+    case 'gemini': return '#007aff';
+    case 'deepseek': return '#af52de';
+    case 'openrouter': return '#8e8e93';
+    case 'qwen': return '#5856d6';
+    case 'zhipu': return '#ff2d55';
+    default: return '#8e8e93';
+  }
+}
+
 const groupedModelOptions = computed(() => {
   const groups: { providerId: string; providerName: string; models: { model: string; isVision: boolean }[] }[] = [];
   for (const opt of filteredModelOptions.value) {
@@ -97,6 +112,11 @@ defineExpose({ toggle, close, isOpen });
 <template>
   <div class="model-selector-wrapper" ref="wrapperRef">
     <button class="model-selector-btn" @click="toggle" :aria-label="'Select model: ' + activeModelName" aria-haspopup="listbox">
+      <span
+        v-if="activeProviderId"
+        class="provider-status-dot"
+        :style="{ background: getProviderColor(activeProviderId) }"
+      ></span>
       <span class="model-name">{{ activeModelName }}</span>
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <polyline points="6 9 12 15 18 9"/>
@@ -120,6 +140,7 @@ defineExpose({ toggle, close, isOpen });
       <div class="model-list-scroll">
         <template v-for="group in groupedModelOptions" :key="group.providerId">
           <div class="model-group-header">
+            <span class="model-group-dot" :style="{ background: getProviderColor(group.providerId) }"></span>
             <span class="model-group-name">{{ group.providerName }}</span>
           </div>
           <div
@@ -138,7 +159,12 @@ defineExpose({ toggle, close, isOpen });
         </template>
       </div>
       <div v-if="filteredModelOptions.length === 0" class="model-option-empty">
-        {{ allModelOptions.length === 0 ? i18n(language, 'model.noModels') : i18n(language, 'model.noMatchingModels') }}
+        <svg v-if="allModelOptions.length > 0" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="model-empty-icon">
+          <circle cx="11" cy="11" r="8"/>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          <line x1="8" y1="11" x2="14" y2="11"/>
+        </svg>
+        <span>{{ allModelOptions.length === 0 ? i18n(language, 'model.noModels') : i18n(language, 'model.noMatchingModels') }}</span>
       </div>
     </div>
   </div>
@@ -174,6 +200,13 @@ defineExpose({ toggle, close, isOpen });
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 120px;
+}
+
+.provider-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
 }
 
 .model-selector-dropdown {
@@ -231,11 +264,21 @@ defineExpose({ toggle, close, isOpen });
 }
 
 .model-group-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
   padding: var(--spacing-xs) var(--spacing-md);
   background: var(--color-bg-secondary);
   position: sticky;
   top: 0;
   z-index: 1;
+}
+
+.model-group-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
 }
 
 .model-group-name {
@@ -291,9 +334,17 @@ defineExpose({ toggle, close, isOpen });
 }
 
 .model-option-empty {
-  padding: var(--spacing-md);
+  padding: var(--spacing-lg);
   text-align: center;
   font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+.model-empty-icon {
+  opacity: 0.4;
 }
 </style>

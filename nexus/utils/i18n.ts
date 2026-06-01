@@ -23,6 +23,7 @@ const translations: Record<Language, Record<TranslationKey, string>> = {
     // ===== Model Selector =====
     'model.noModels': 'No models configured. Open Settings to add a provider.',
     'model.noMatchingModels': 'No matching models',
+    'providers.noModelsHint': 'Click \'Fetch Models\' or add manually below',
     'model.searchPlaceholder': 'Search models...',
     'model.notConfigured': 'Not configured',
 
@@ -59,6 +60,7 @@ const translations: Record<Language, Record<TranslationKey, string>> = {
     'input.fileTooLarge': 'File too large (max {size}MB)',
     'input.unsupportedFileType': 'Unsupported file type',
     'input.parsingFile': 'Parsing file...',
+    'input.shortcutHint': 'Enter to send, Shift+Enter for new line',
 
     // ===== Share Page Content =====
     'sharePage.share': 'Share page',
@@ -414,6 +416,7 @@ const translations: Record<Language, Record<TranslationKey, string>> = {
     // ===== Model Selector =====
     'model.noModels': '未配置模型，请在设置中添加供应商。',
     'model.noMatchingModels': '没有匹配的模型',
+    'providers.noModelsHint': '点击「获取模型」或在下方手动添加',
     'model.searchPlaceholder': '搜索模型...',
     'model.notConfigured': '未配置',
 
@@ -450,6 +453,7 @@ const translations: Record<Language, Record<TranslationKey, string>> = {
     'input.fileTooLarge': '文件过大（最大 {size}MB）',
     'input.unsupportedFileType': '不支持的文件类型',
     'input.parsingFile': '解析文件中...',
+    'input.shortcutHint': '回车发送，Shift+回车换行',
 
     // ===== Share Page Content =====
     'sharePage.share': '共享页面',

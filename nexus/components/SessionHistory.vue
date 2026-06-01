@@ -32,14 +32,42 @@ const sessionListRef = ref<HTMLElement | null>(null);
 
 function formatSessionDate(timestamp: number): string {
   const date = new Date(timestamp);
+  const now = new Date();
   const locale = props.language === 'zh-CN' ? 'zh-CN' : 'en-US';
+
+  const isToday = date.toDateString() === now.toDateString();
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const isYesterday = date.toDateString() === yesterday.toDateString();
+
+  const timeStr = date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
+
+  if (isToday) {
+    return locale === 'zh-CN'
+      ? `今天 ${timeStr}`
+      : `Today ${timeStr}`;
+  }
+  if (isYesterday) {
+    return locale === 'zh-CN'
+      ? `昨天 ${timeStr}`
+      : `Yesterday ${timeStr}`;
+  }
   return date.toLocaleDateString(locale, {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
+    month: 'short',
+    day: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
   });
+}
+
+function getSessionPreview(session: ChatSession): string {
+  if (session.messages.length === 0) return '';
+  const lastMsg = session.messages[session.messages.length - 1];
+  const content = lastMsg.content || '';
+  // Remove error prefixes
+  const clean = content.replace(/^__ERROR__:.*$/m, '').trim();
+  if (!clean) return '';
+  return clean.substring(0, 80) + (clean.length > 80 ? '...' : '');
 }
 
 const filteredSessions = computed(() => {
@@ -163,6 +191,7 @@ function cancelRename() {
           :key="session.id"
           class="history-item"
           :class="{ active: currentSessionId === session.id }"
+          :title="getSessionPreview(session)"
           @click="emit('load', session)"
         >
           <div class="history-item-info">
@@ -177,7 +206,10 @@ function cancelRename() {
               />
             </template>
             <template v-else>
-              <span class="history-item-title">{{ session.title }}</span>
+              <span class="history-item-title">
+                {{ session.title }}
+                <span v-if="currentSessionId === session.id" class="active-indicator"></span>
+              </span>
             </template>
             <span class="history-item-date">{{ formatSessionDate(session.updatedAt) }}</span>
           </div>
@@ -198,7 +230,10 @@ function cancelRename() {
         </button>
       </template>
       <div v-if="sessions.length === 0" class="history-empty">
-        {{ i18n(language, 'history.noChats') }}
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="history-empty-icon">
+          <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
+        </svg>
+        <span>{{ i18n(language, 'history.noChats') }}</span>
       </div>
       <div v-if="loading" class="history-loading">{{ i18n(language, 'history.loading') }}</div>
     </div>
@@ -329,6 +364,12 @@ function cancelRename() {
   border-radius: var(--radius-sm);
   transition: background var(--transition-fast);
   text-align: left;
+  animation: history-item-fade 200ms ease both;
+}
+
+@keyframes history-item-fade {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .history-item:hover {
@@ -337,6 +378,8 @@ function cancelRename() {
 
 .history-item.active {
   background: var(--color-bg-secondary);
+  border-left: 3px solid var(--color-accent);
+  padding-left: calc(var(--spacing-md) - 3px);
 }
 
 .history-item-info {
@@ -354,6 +397,23 @@ function cancelRename() {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+.active-indicator {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  flex-shrink: 0;
+  animation: active-pulse 2s ease-in-out infinite;
+}
+
+@keyframes active-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
 }
 
 .history-item-date {
@@ -431,10 +491,24 @@ function cancelRename() {
 }
 
 .history-empty {
-  padding: var(--spacing-lg);
+  padding: var(--spacing-xl);
   text-align: center;
   font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-sm);
+  animation: history-empty-fade 300ms ease;
+}
+
+@keyframes history-empty-fade {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.history-empty-icon {
+  opacity: 0.4;
 }
 
 .history-loading {

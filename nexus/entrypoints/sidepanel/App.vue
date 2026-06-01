@@ -139,16 +139,19 @@ const lastErrorInfo = ref<{
 
 // Toast notification system
 const toastMessage = ref<string | null>(null);
+const toastType = ref<'success' | 'error' | 'info' | 'warning'>('info');
 let toastTimer: ReturnType<typeof setTimeout> | null = null;
 
 // Network offline state
 const isOffline = ref(!navigator.onLine);
 
-function showToast(message: string, duration: number = 2000): void {
+function showToast(message: string, duration: number = 2000, type: 'success' | 'error' | 'info' | 'warning' = 'info'): void {
   if (toastTimer) clearTimeout(toastTimer);
   toastMessage.value = message;
+  toastType.value = type;
   toastTimer = setTimeout(() => {
     toastMessage.value = null;
+    toastType.value = 'info';
     toastTimer = null;
   }, duration);
 }
@@ -414,13 +417,18 @@ function closeLightbox() {
 
 // Auto-scroll management
 let isUserScrolledUp = false;
+let scrollRafId: number | null = null;
 
 const checkUserScroll = () => {
-  const el = chatAreaRef.value;
-  if (!el) return;
-  const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-  isUserScrolledUp = distFromBottom > 100;
-  showScrollToBottom.value = distFromBottom > 200;
+  if (scrollRafId !== null) return; // Already scheduled
+  scrollRafId = requestAnimationFrame(() => {
+    scrollRafId = null;
+    const el = chatAreaRef.value;
+    if (!el) return;
+    const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    isUserScrolledUp = distFromBottom > 100;
+    showScrollToBottom.value = distFromBottom > 200;
+  });
 };
 
 function handleScrollToBottom() {
@@ -1978,6 +1986,11 @@ onMounted(async () => {
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
 
+    // Auto-focus input after short delay
+    setTimeout(() => {
+      messageInputRef.value?.focus();
+    }, 300);
+
     // Store refs for cleanup
     (window as any).__nexusOnlineHandler = handleOnline;
     (window as any).__nexusOfflineHandler = handleOffline;
@@ -2338,24 +2351,26 @@ onUnmounted(() => {
     />
 
     <!-- History panel -->
-    <div v-if="showHistory" class="history-overlay" @click="showHistory = false">
-      <SessionHistory
-        :sessions="sessions"
-        :current-session-id="currentSession?.id || null"
-        :language="currentLanguage"
-        :has-more="sessionsHasMore"
-        :loading="sessionsLoading"
-        @load="loadSession"
-        @delete="removeSession"
-        @load-more="loadMoreSessions"
-        @rename="renameSession"
-        @export-markdown="handleExportCurrentSession"
-        @export-html="handleExportCurrentSessionAsHtml"
-        @import="handleImportSession"
-        @new-chat="newChat"
-        @close="showHistory = false"
-      />
-    </div>
+    <Transition name="history-panel">
+      <div v-if="showHistory" class="history-overlay" @click="showHistory = false">
+        <SessionHistory
+          :sessions="sessions"
+          :current-session-id="currentSession?.id || null"
+          :language="currentLanguage"
+          :has-more="sessionsHasMore"
+          :loading="sessionsLoading"
+          @load="loadSession"
+          @delete="removeSession"
+          @load-more="loadMoreSessions"
+          @rename="renameSession"
+          @export-markdown="handleExportCurrentSession"
+          @export-html="handleExportCurrentSessionAsHtml"
+          @import="handleImportSession"
+          @new-chat="newChat"
+          @close="showHistory = false"
+        />
+      </div>
+    </Transition>
 
     <!-- Selection quote popup -->
     <div
@@ -2423,8 +2438,12 @@ onUnmounted(() => {
 
     <!-- Toast notification -->
     <Transition name="toast">
-      <div v-if="toastMessage" class="toast-notification">
-        {{ toastMessage }}
+      <div v-if="toastMessage" class="toast-notification" :class="'toast-' + toastType">
+        <svg v-if="toastType === 'success'" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+        <svg v-else-if="toastType === 'error'" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+        <svg v-else-if="toastType === 'warning'" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+        <span>{{ toastMessage }}</span>
       </div>
     </Transition>
   </div>
@@ -2774,7 +2793,33 @@ onUnmounted(() => {
   z-index: 50;
   display: flex;
   justify-content: flex-start;
-  animation: overlay-fade 200ms ease;
+}
+
+/* History panel transitions */
+.history-panel-enter-active {
+  animation: history-enter 250ms ease;
+}
+
+.history-panel-leave-active {
+  animation: history-leave 200ms ease;
+}
+
+@keyframes history-enter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes history-leave {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
 }
 
 @keyframes overlay-fade {
@@ -3085,17 +3130,30 @@ onUnmounted(() => {
   bottom: 80px;
   left: 50%;
   transform: translateX(-50%);
-  padding: var(--spacing-sm) var(--spacing-md);
-  background: var(--color-bg-secondary);
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-lg);
+  background: var(--color-bg-primary);
   color: var(--color-text-primary);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-full);
   box-shadow: var(--shadow-lg);
   font-size: var(--font-size-sm);
   z-index: 300;
   max-width: 90%;
   text-align: center;
   pointer-events: none;
+  backdrop-filter: var(--blur-frost);
+}
+
+.toast-success { color: var(--color-success); }
+.toast-error { color: var(--color-error); }
+.toast-warning { color: var(--color-warning); }
+.toast-info { color: var(--color-accent); }
+
+.toast-notification span {
+  color: var(--color-text-primary);
 }
 
 .toast-enter-active {
