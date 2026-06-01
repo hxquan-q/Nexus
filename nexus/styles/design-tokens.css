@@ -15,6 +15,14 @@
   --color-error: #ff3b30;
   --color-success: #34c759;
 
+  /* Code block colors */
+  --color-code-bg: #f0f0f5;
+  --color-code-border: rgba(0, 0, 0, 0.06);
+
+  /* Link color */
+  --color-link: #007aff;
+  --color-link-hover: #0056cc;
+
   /* Radius */
   --radius-sm: 8px;
   --radius-md: 12px;
@@ -63,7 +71,15 @@
   --color-text-primary: #f5f5f7;
   --color-text-secondary: #98989d;
   --color-text-user-bubble: #ffffff;
-  --color-border: rgba(255, 255, 255, 0.08);
+  --color-border: rgba(255, 255, 255, 0.1);
   --color-accent: #0a84ff;
   --color-accent-hover: #409cff;
+
+  /* Code block colors - darker than chat bubble */
+  --color-code-bg: #1a1a1c;
+  --color-code-border: rgba(255, 255, 255, 0.06);
+
+  /* Link color */
+  --color-link: #409cff;
+  --color-link-hover: #6fb3ff;
 }

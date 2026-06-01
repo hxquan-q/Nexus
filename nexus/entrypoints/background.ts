@@ -15,6 +15,92 @@ export default defineBackground(() => {
     sidePanelApi.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
   }
 
+  // Context menu entries
+  chrome.runtime.onInstalled.addListener(() => {
+    chrome.contextMenus.create({
+      id: 'nexus-summarize',
+      title: 'Summarize with Nexus',
+      contexts: ['selection'],
+    });
+    chrome.contextMenus.create({
+      id: 'nexus-translate',
+      title: 'Translate with Nexus',
+      contexts: ['selection'],
+    });
+    chrome.contextMenus.create({
+      id: 'nexus-explain',
+      title: 'Explain with Nexus',
+      contexts: ['selection'],
+    });
+    chrome.contextMenus.create({
+      id: 'nexus-summarize-page',
+      title: 'Summarize page with Nexus',
+      contexts: ['page'],
+    });
+    chrome.contextMenus.create({
+      id: 'nexus-image-analyze',
+      title: 'Analyze image with Nexus',
+      contexts: ['image'],
+    });
+  });
+
+  // Handle context menu clicks
+  chrome.contextMenus?.onClicked?.addListener(async (info: any, tab: any) => {
+    if (!info.menuItemId) return;
+    const menuItemId = info.menuItemId as string;
+
+    let prompt = '';
+    let text = '';
+
+    switch (menuItemId) {
+      case 'nexus-summarize':
+        text = info.selectionText || '';
+        if (!text) return;
+        prompt = `Please summarize the following text concisely:\n\n${text}`;
+        break;
+      case 'nexus-translate':
+        text = info.selectionText || '';
+        if (!text) return;
+        prompt = `Please translate the following text. Auto-detect the source language and translate to the user's likely preferred language:\n\n${text}`;
+        break;
+      case 'nexus-explain':
+        text = info.selectionText || '';
+        if (!text) return;
+        prompt = `Please explain the following text clearly:\n\n${text}`;
+        break;
+      case 'nexus-summarize-page':
+        if (!tab?.id) return;
+        try {
+          const { extractPageContent } = await import('../utils/pageExtractor');
+          const content = await extractPageContent(tab.id, { maxLength: 30000 });
+          const { formatPageContent } = await import('../utils/pageExtractor');
+          const formatted = formatPageContent(content);
+          prompt = `Please summarize this web page content:\n\n${formatted}`;
+        } catch {
+          return;
+        }
+        break;
+      case 'nexus-image-analyze':
+        if (!info.srcUrl) return;
+        prompt = `Please analyze this image and describe what you see:\n\nImage URL: ${info.srcUrl}`;
+        break;
+      default:
+        return;
+    }
+
+    // Open sidepanel and send the prompt
+    if (tab?.windowId && sidePanelApi?.open) {
+      await sidePanelApi.open({ windowId: tab.windowId });
+    }
+
+    // Send the context menu action to sidepanel
+    await sendToSidepanel({
+      type: 'CONTEXT_MENU_ACTION',
+      prompt,
+      menuItemId,
+    });
+  });
+
   // Open sidepanel when the extension icon is clicked
   browser.action.onClicked.addListener(async (tab) => {
     if (tab.windowId && sidePanelApi?.open) {
@@ -330,7 +416,7 @@ async function processSelectionAction(
 ): Promise<{ content?: string; error?: string }> {
   try {
     // Import storage and API utilities
-    const { getActiveProvider, toAIProvider } = await import('../utils/storage');
+    const { getActiveProvider, toAIProvider, getSystemPrompt } = await import('../utils/storage');
     const { streamChat } = await import('../utils/api');
 
     const storedProvider = await getActiveProvider();
@@ -340,6 +426,7 @@ async function processSelectionAction(
 
     const provider = toAIProvider(storedProvider);
     const messages = [
+      { role: 'system' as const, content: '', timestamp: Date.now() },
       { role: 'user' as const, content: prompt, timestamp: Date.now() },
     ];
 

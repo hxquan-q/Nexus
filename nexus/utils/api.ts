@@ -8,6 +8,7 @@ import OpenAI from 'openai';
 import type { ChatCompletionMessageParam, ChatCompletionTool } from 'openai/resources/chat/completions';
 import type { AIProvider, ChatMessage, ChatImage, StreamEvent, ToolCall, ToolResult } from './providers/types';
 import { getAdapterConfig, isOpenAICompatible } from './providers/adapters';
+import { getSystemPrompt } from './storage';
 
 // ============================================================
 // Error handling
@@ -275,7 +276,7 @@ export async function* streamChat(
     maxRetries: 0,
   });
 
-  const systemPrompt = buildSystemPrompt(!!(tools && tools.length > 0));
+  const systemPrompt = await buildSystemPrompt(!!(tools && tools.length > 0));
 
   const apiMessages: ApiMessage[] = [
     { role: 'system', content: systemPrompt },
@@ -484,9 +485,11 @@ export async function* streamChat(
 
 /**
  * Build the system prompt with optional tool instructions.
+ * Includes the user's custom system prompt if set.
  */
-function buildSystemPrompt(hasTools: boolean): string {
-  let prompt = `You are a helpful AI assistant. Always respond using Markdown format for better readability. Use:
+async function buildSystemPrompt(hasTools: boolean): Promise<string> {
+  const customPrompt = await getSystemPrompt();
+  let prompt = customPrompt || `You are a helpful AI assistant. Always respond using Markdown format for better readability. Use:
 - Headers (##, ###) for sections
 - **bold** and *italic* for emphasis
 - \`code\` for inline code and \`\`\` for code blocks with language specification

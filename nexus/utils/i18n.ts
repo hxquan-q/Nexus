@@ -182,6 +182,10 @@ const translations: Record<Language, Record<TranslationKey, string>> = {
 
     // ===== Options: AI Settings =====
     'aiSettings.title': 'AI Settings',
+    'aiSettings.systemPrompt': 'System Prompt',
+    'aiSettings.systemPromptDesc': 'Custom instructions sent to the AI with every message. Leave empty to use the default prompt.',
+    'aiSettings.systemPromptPlaceholder': 'e.g., You are a helpful assistant. Always respond in Chinese.',
+    'aiSettings.resetSystemPrompt': 'Reset to Default',
     'aiSettings.pageContentMax': 'Page Content Max Length',
     'aiSettings.pageContentDesc': 'Maximum characters to extract from web pages.',
     'aiSettings.maxToolCalls': 'Max Tool Calls Per Turn',
@@ -474,6 +478,10 @@ const translations: Record<Language, Record<TranslationKey, string>> = {
 
     // ===== Options: AI Settings =====
     'aiSettings.title': 'AI 设置',
+    'aiSettings.systemPrompt': '系统提示词',
+    'aiSettings.systemPromptDesc': '每次发送消息时附加的自定义指令。留空则使用默认提示词。',
+    'aiSettings.systemPromptPlaceholder': '例如：你是一个有用的助手。请始终用中文回答。',
+    'aiSettings.resetSystemPrompt': '恢复默认',
     'aiSettings.pageContentMax': '页面内容最大长度',
     'aiSettings.pageContentDesc': '从网页中提取的最大字符数。',
     'aiSettings.maxToolCalls': '每轮最大工具调用次数',

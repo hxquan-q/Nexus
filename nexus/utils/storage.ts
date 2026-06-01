@@ -243,6 +243,28 @@ export async function setMaxToolCallsPerTurn(max: number): Promise<void> {
 }
 
 // ============================================================
+// System prompt
+// ============================================================
+
+const systemPromptStorage = storage.defineItem<string>('local:systemPrompt', {
+  fallback: '',
+});
+
+export async function getSystemPrompt(): Promise<string> {
+  return await systemPromptStorage.getValue();
+}
+
+export async function setSystemPrompt(prompt: string): Promise<void> {
+  await systemPromptStorage.setValue(prompt);
+}
+
+export function watchSystemPrompt(callback: (prompt: string) => void): () => void {
+  return systemPromptStorage.watch((newValue) => {
+    callback(newValue || '');
+  });
+}
+
+// ============================================================
 // Raw extraction sites
 // ============================================================
 

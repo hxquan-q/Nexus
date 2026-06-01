@@ -28,6 +28,8 @@ import {
   getShortcuts,
   saveShortcuts,
   getDefaultShortcuts,
+  getSystemPrompt,
+  setSystemPrompt,
   type StoredProvider,
   type ThemeMode,
   type PresetAction,
@@ -338,6 +340,8 @@ const pageContentMaxLength = ref(30000);
 const maxToolCallsPerTurn = ref(10);
 const rawExtractionSites = ref<string[]>([]);
 const newSiteInput = ref('');
+const systemPromptText = ref('');
+const systemPromptSaved = ref('');
 
 async function changePageContentMaxLength() {
   await setPageContentMaxLength(pageContentMaxLength.value);
@@ -345,6 +349,17 @@ async function changePageContentMaxLength() {
 
 async function changeMaxToolCalls() {
   await setMaxToolCallsPerTurn(maxToolCallsPerTurn.value);
+}
+
+async function saveSystemPromptText() {
+  await setSystemPrompt(systemPromptText.value);
+  systemPromptSaved.value = systemPromptText.value;
+  showSaveToast('System prompt saved');
+}
+
+function resetSystemPromptText() {
+  systemPromptText.value = '';
+  systemPromptSaved.value = '';
 }
 
 async function addRawExtractionSite() {
@@ -738,6 +753,8 @@ onMounted(async () => {
   pageContentMaxLength.value = await getPageContentMaxLength();
   maxToolCallsPerTurn.value = await getMaxToolCallsPerTurn();
   rawExtractionSites.value = await getRawExtractionSites();
+  systemPromptText.value = await getSystemPrompt();
+  systemPromptSaved.value = systemPromptText.value;
 
   // MCP
   mcpServers.value = await getMcpServers();
@@ -970,6 +987,25 @@ onMounted(async () => {
       <div v-if="activeTab === 'ai-settings'">
         <div class="content-header">
           <h1>{{ i18n(currentLanguage, 'aiSettings.title') }}</h1>
+        </div>
+
+        <div class="settings-section">
+          <h3>{{ i18n(currentLanguage, 'aiSettings.systemPrompt') }}</h3>
+          <p class="setting-desc">{{ i18n(currentLanguage, 'aiSettings.systemPromptDesc') }}</p>
+          <textarea
+            v-model="systemPromptText"
+            class="system-prompt-textarea"
+            :placeholder="i18n(currentLanguage, 'aiSettings.systemPromptPlaceholder')"
+            rows="5"
+          ></textarea>
+          <div class="system-prompt-actions">
+            <button class="btn-primary" @click="saveSystemPromptText" :disabled="systemPromptText === systemPromptSaved">
+              {{ i18n(currentLanguage, 'options.save') }}
+            </button>
+            <button class="btn-ghost" @click="resetSystemPromptText" :disabled="!systemPromptText">
+              {{ i18n(currentLanguage, 'aiSettings.resetSystemPrompt') }}
+            </button>
+          </div>
         </div>
 
         <div class="settings-section">
@@ -2031,6 +2067,36 @@ onMounted(async () => {
 
 .danger-zone h3 {
   color: var(--color-error);
+}
+
+/* System prompt */
+.system-prompt-textarea {
+  width: 100%;
+  padding: var(--spacing-sm) var(--spacing-md);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-primary);
+  font-family: var(--font-body);
+  font-size: var(--font-size-sm);
+  resize: vertical;
+  min-height: 100px;
+  outline: none;
+  line-height: var(--line-height-normal);
+}
+
+.system-prompt-textarea:focus {
+  border-color: var(--color-accent);
+}
+
+.system-prompt-textarea::placeholder {
+  color: var(--color-text-secondary);
+}
+
+.system-prompt-actions {
+  display: flex;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-sm);
 }
 
 /* Language */

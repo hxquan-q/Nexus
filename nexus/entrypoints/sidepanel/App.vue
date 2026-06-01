@@ -16,6 +16,7 @@ import {
   watchLanguage,
   getSelectionQuoteEnabled,
   watchSelectionQuoteEnabled,
+  getSystemPrompt,
   toAIProvider,
   type StoredProvider,
   type ThemeMode,
@@ -86,6 +87,16 @@ const historySearchQuery = ref('');
 
 // Copied message feedback
 const copiedMessageIndex = ref<number | null>(null);
+
+// Edit message state
+const editingMessageIndex = ref<number | null>(null);
+const editingMessageText = ref('');
+
+// Scroll-to-bottom button
+const showScrollToBottom = ref(false);
+
+// Context menu prompt (received from background)
+const contextMenuPrompt = ref<string | null>(null);
 
 // Textarea
 const textareaRef = ref<HTMLTextAreaElement | null>(null);
@@ -332,8 +343,20 @@ const checkUserScroll = () => {
   const el = chatAreaRef.value;
   if (!el) return;
   // If user is more than 100px from bottom, consider them scrolled up
-  isUserScrolledUp = el.scrollHeight - el.scrollTop - el.clientHeight > 100;
+  const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+  isUserScrolledUp = distFromBottom > 100;
+  showScrollToBottom.value = distFromBottom > 200;
 };
+
+function handleScrollToBottom() {
+  isUserScrolledUp = false;
+  showScrollToBottom.value = false;
+  nextTick(() => {
+    if (chatAreaRef.value) {
+      chatAreaRef.value.scrollTop = chatAreaRef.value.scrollHeight;
+    }
+  });
+}
 
 const scrollToBottom = () => {
   nextTick(() => {
@@ -369,6 +392,213 @@ async function copyMessage(index: number): Promise<void> {
       }
     }, 2000);
   }
+}
+
+// ============================================================
+// Message actions: Edit, Regenerate, Delete
+// ============================================================
+
+function startEditMessage(index: number): void {
+  const message = messages.value[index];
+  if (message.role !== 'user') return;
+  editingMessageIndex.value = index;
+  editingMessageText.value = getUserMessageDisplayContent(message);
+}
+
+function cancelEditMessage(): void {
+  editingMessageIndex.value = null;
+  editingMessageText.value = '';
+}
+
+async function saveEditMessage(): Promise<void> {
+  const index = editingMessageIndex.value;
+  if (index === null) return;
+  const newText = editingMessageText.value.trim();
+  if (!newText) return;
+
+  // Truncate messages to remove everything after the edited message
+  const truncated = messages.value.slice(0, index);
+  const editedMessage = { ...messages.value[index] };
+  editedMessage.content = newText;
+  editedMessage.timestamp = Date.now();
+  // Clear file/quote references for simplicity on edit
+  editedMessage.fileAttachments = undefined;
+  editedMessage.images = undefined;
+  editedMessage.quote = undefined;
+  truncated.push(editedMessage);
+
+  messages.value = truncated;
+  triggerRef(messages);
+  editingMessageIndex.value = null;
+  editingMessageText.value = '';
+
+  // Save and resend
+  await saveCurrentSession();
+  // Trigger resend from this point
+  await resendFromLastUserMessage();
+}
+
+async function resendFromLastUserMessage(): Promise<void> {
+  // Find the last user message
+  const lastUserIdx = messages.value.findLastIndex((m) => m.role === 'user');
+  if (lastUserIdx === -1) return;
+
+  // Use messages up to and including the last user message
+  const messagesForApi = messages.value.slice(0, lastUserIdx + 1);
+
+  // Set messages and trigger send
+  messages.value = messagesForApi;
+  triggerRef(messages);
+
+  // Now send with the existing messages
+  await sendWithExistingMessages();
+}
+
+async function sendWithExistingMessages(): Promise<void> {
+  isLoading.value = true;
+  isUserScrolledUp = false;
+  chatAbortController.value?.abort();
+  chatAbortController.value = new AbortController();
+
+  const storedProvider = await getActiveProvider();
+  if (!storedProvider) {
+    chatAbortController.value = null;
+    isLoading.value = false;
+    openSettings();
+    return;
+  }
+
+  const provider = toAIProvider(storedProvider);
+
+  if (!currentSession.value) {
+    currentSession.value = await createSession(storedProvider.id);
+    await loadInitialSessions();
+  }
+
+  const openaiTools = getToolsAsOpenAIFunctions() as any;
+  for (const mcpTool of mcpTools.value) {
+    openaiTools.push(mcpToolToOpenAITool(mcpTool));
+  }
+  const skillTools = getSkillsAsTools(loadedSkills.value);
+  openaiTools.push(...skillTools);
+
+  let assistantMessage: ChatMessage | null = null;
+  try {
+    assistantMessage = {
+      role: 'assistant',
+      content: '',
+      timestamp: Date.now(),
+    };
+    messages.value.push(assistantMessage);
+    triggerRef(messages);
+    scrollToBottom();
+
+    for await (const event of streamChat(provider, messages.value.slice(0, -1), {
+      abortSignal: chatAbortController.value.signal,
+      tools: openaiTools,
+      toolExecutor: executeToolCall,
+      maxToolIterations: 10,
+    })) {
+      switch (event.type) {
+        case 'reasoning':
+          if (!assistantMessage.reasoning) assistantMessage.reasoning = '';
+          assistantMessage.reasoning += event.content;
+          streamContentDirty = true;
+          streamRenderThrottle();
+          break;
+        case 'content':
+          assistantMessage.content += event.content;
+          streamContentDirty = true;
+          streamRenderThrottle();
+          scrollToBottom();
+          break;
+        case 'thinking':
+          break;
+        case 'tool_call':
+          if (event.toolCall) {
+            const toolName = event.toolCall.name.replace('browser_', '').replace(/_/g, ' ');
+            const toolArgs = event.toolCall.arguments;
+            let toolDescription = `**Tool: ${toolName}**`;
+            if (toolArgs.url) toolDescription += ` -> ${toolArgs.url}`;
+            if (toolArgs.uid) toolDescription += ` (element: ${toolArgs.uid})`;
+            if (toolArgs.key) toolDescription += ` (${toolArgs.key})`;
+            if (toolArgs.text) toolDescription += ` "${String(toolArgs.text).substring(0, 50)}"`;
+            assistantMessage.content += `\n> ${toolDescription}\n\n`;
+            triggerRef(messages);
+            scrollToBottom();
+          }
+          break;
+        case 'tool_result':
+          break;
+        case 'done':
+          assistantMessage.content = assistantMessage.content.trim();
+          if (assistantMessage.reasoning) {
+            assistantMessage.reasoning = assistantMessage.reasoning.trim();
+          }
+          triggerRef(messages);
+          break;
+      }
+    }
+    assistantMessage.timestamp = Date.now();
+  } catch (error: any) {
+    const isUserAborted = error instanceof ApiError && error.code === 'USER_ABORTED';
+    if (isUserAborted) {
+      if (assistantMessage && !assistantMessage.content.trim() && !(assistantMessage.reasoning || '').trim()) {
+        const lastMessage = messages.value[messages.value.length - 1];
+        if (lastMessage === assistantMessage) {
+          messages.value.pop();
+          triggerRef(messages);
+        }
+      }
+    } else {
+      messages.value.push({
+        role: 'assistant',
+        content: `__ERROR__: ${error.message}`,
+        timestamp: Date.now(),
+      });
+      triggerRef(messages);
+    }
+  } finally {
+    chatAbortController.value = null;
+    isLoading.value = false;
+    toolExecutionStatus.value = null;
+    streamContentDirty = false;
+    if (streamRenderTimer) {
+      cancelAnimationFrame(streamRenderTimer);
+      streamRenderTimer = null;
+    }
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+    }
+    await saveCurrentSession();
+    scrollToBottom();
+  }
+}
+
+async function regenerateLastResponse(): Promise<void> {
+  // Remove the last assistant message
+  const lastMsg = messages.value[messages.value.length - 1];
+  if (lastMsg?.role === 'assistant') {
+    messages.value.pop();
+    triggerRef(messages);
+  }
+  await resendFromLastUserMessage();
+}
+
+async function deleteMessagePair(index: number): Promise<void> {
+  // Delete a user message and the assistant response that follows
+  const message = messages.value[index];
+  if (message.role !== 'user') return;
+
+  const truncated = messages.value.slice(0, index);
+  // Also remove the assistant response if it exists right after
+  if (index + 1 < messages.value.length && messages.value[index + 1].role === 'assistant') {
+    // Already truncated to before index, so both are removed
+  }
+  messages.value = truncated;
+  triggerRef(messages);
+  await saveCurrentSession();
 }
 
 // ============================================================
@@ -430,12 +660,53 @@ async function handleMarkdownActionClick(event: MouseEvent): Promise<void> {
 }
 
 function handleGlobalKeydown(event: KeyboardEvent): void {
+  // Escape: close modals or cancel generation
   if (event.key === 'Escape') {
     if (lightboxImage.value) {
       closeLightbox();
     } else if (fullscreenCodeBlock.value) {
       closeFullscreenCodeBlock();
+    } else if (isLoading.value) {
+      terminateCurrentGeneration();
+    } else if (editingMessageIndex.value !== null) {
+      cancelEditMessage();
     }
+    return;
+  }
+
+  // Ctrl+N: New chat
+  if (event.ctrlKey && event.key === 'n') {
+    event.preventDefault();
+    newChat();
+    return;
+  }
+
+  // Ctrl+H: Toggle history panel
+  if (event.ctrlKey && event.key === 'h') {
+    event.preventDefault();
+    if (showHistory.value) {
+      showHistory.value = false;
+    } else {
+      openHistory();
+    }
+    return;
+  }
+
+  // Ctrl+,: Open settings
+  if (event.ctrlKey && event.key === ',') {
+    event.preventDefault();
+    openSettings();
+    return;
+  }
+
+  // Ctrl+Shift+C: Copy last assistant message
+  if (event.ctrlKey && event.shiftKey && event.key === 'C') {
+    event.preventDefault();
+    const lastAssistantIdx = messages.value.findLastIndex((m) => m.role === 'assistant');
+    if (lastAssistantIdx >= 0) {
+      copyMessage(lastAssistantIdx);
+    }
+    return;
   }
 }
 
@@ -1475,6 +1746,16 @@ function handleContentMessage(message: any): void {
       }
       break;
     }
+    case 'CONTEXT_MENU_ACTION': {
+      // Context menu action from background script
+      if (message.prompt) {
+        inputText.value = message.prompt;
+        nextTick(() => {
+          sendMessage();
+        });
+      }
+      break;
+    }
   }
 }
 
@@ -1867,69 +2148,161 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <!-- Message bubble -->
-        <div class="message-bubble" :class="[`bubble-${message.role}`]">
-          <!-- Images -->
-          <div v-if="message.images && message.images.length" class="message-images">
-            <img
-              v-for="image in message.images"
-              :key="image.id"
-              :src="image.dataUrl"
-              :alt="image.name"
-              class="message-image"
-              @click="openLightbox(image.dataUrl)"
-            />
+        <!-- Message row with avatar -->
+        <div class="message-row">
+          <!-- Avatar -->
+          <div class="message-avatar" :class="message.role === 'user' ? 'avatar-user' : 'avatar-assistant'">
+            <template v-if="message.role === 'user'">U</template>
+            <template v-else>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                <path d="M2 17l10 5 10-5"/>
+                <path d="M2 12l10 5 10-5"/>
+              </svg>
+            </template>
           </div>
 
-          <!-- File attachments -->
-          <div v-if="message.fileAttachments && message.fileAttachments.length" class="message-files">
-            <div v-for="file in message.fileAttachments" :key="file.id" class="message-file-chip">
-              <span class="message-file-icon">{{ getFileIcon(file.format) }}</span>
-              <span class="message-file-name">{{ file.name }}</span>
+          <div class="message-body">
+            <!-- Message bubble -->
+            <div class="message-bubble" :class="[`bubble-${message.role}`, { 'bubble-error': message.content?.startsWith('__ERROR__') }]">
+              <!-- Images -->
+              <div v-if="message.images && message.images.length" class="message-images">
+                <img
+                  v-for="image in message.images"
+                  :key="image.id"
+                  :src="image.dataUrl"
+                  :alt="image.name"
+                  class="message-image"
+                  @click="openLightbox(image.dataUrl)"
+                />
+              </div>
+
+              <!-- File attachments -->
+              <div v-if="message.fileAttachments && message.fileAttachments.length" class="message-files">
+                <div v-for="file in message.fileAttachments" :key="file.id" class="message-file-chip">
+                  <span class="message-file-icon">{{ getFileIcon(file.format) }}</span>
+                  <span class="message-file-name">{{ file.name }}</span>
+                </div>
+              </div>
+
+              <!-- Quote -->
+              <div v-if="message.quote" class="message-quote">
+                {{ message.quote }}
+              </div>
+
+              <!-- Edit mode for user messages -->
+              <template v-if="editingMessageIndex === index">
+                <textarea
+                  class="edit-textarea"
+                  v-model="editingMessageText"
+                  rows="3"
+                  @keydown.escape="cancelEditMessage"
+                ></textarea>
+                <div class="edit-actions">
+                  <button class="edit-action-btn cancel" @click="cancelEditMessage">{{ i18n(currentLanguage, 'chat.cancel') }}</button>
+                  <button class="edit-action-btn save" @click="saveEditMessage">{{ i18n(currentLanguage, 'chat.saveResend') }}</button>
+                </div>
+              </template>
+
+              <!-- Normal content -->
+              <template v-else>
+                <!-- Error message with retry -->
+                <template v-if="message.content?.startsWith('__ERROR__')">
+                  <div class="error-content">
+                    {{ message.content.replace('__ERROR__: ', '') }}
+                    <button class="retry-btn" @click="regenerateLastResponse">Retry</button>
+                  </div>
+                </template>
+
+                <!-- Assistant markdown content -->
+                <template v-else-if="message.role === 'assistant'">
+                  <div
+                    class="message-content markdown-content"
+                    v-html="renderMarkdown(message.content || '')"
+                  ></div>
+                  <!-- Streaming cursor -->
+                  <span v-if="isLoading && index === messages.length - 1 && message.content" class="streaming-cursor"></span>
+                </template>
+
+                <!-- User message content -->
+                <template v-else>
+                  <div class="message-content">
+                    {{ getUserMessageDisplayContent(message) }}
+                  </div>
+                </template>
+
+                <!-- Typing indicator -->
+                <div v-if="isLoading && index === messages.length - 1 && message.role === 'assistant' && !message.content" class="typing-indicator">
+                  <span></span><span></span><span></span>
+                </div>
+              </template>
+            </div>
+
+            <!-- Message actions row -->
+            <div class="message-actions-row" v-if="editingMessageIndex !== index">
+              <!-- Timestamp -->
+              <span class="message-time">{{ formatTime(message.timestamp) }}</span>
+
+              <!-- Assistant actions -->
+              <template v-if="message.role === 'assistant' && message.content && !message.content.startsWith('__ERROR__')">
+                <button
+                  class="msg-action-btn"
+                  :class="{ copied: copiedMessageIndex === index }"
+                  @click="copyMessage(index)"
+                  :title="i18n(currentLanguage, 'chat.copy')"
+                >
+                  <svg v-if="copiedMessageIndex !== index" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                    <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
+                  </svg>
+                  <svg v-else width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="20 6 9 17 4 12"/>
+                  </svg>
+                </button>
+                <button
+                  v-if="index === messages.length - 1"
+                  class="msg-action-btn"
+                  @click="regenerateLastResponse"
+                  title="Regenerate"
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="23 4 23 10 17 10"/>
+                    <path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/>
+                  </svg>
+                </button>
+              </template>
+
+              <!-- User message actions -->
+              <template v-if="message.role === 'user'">
+                <button class="msg-action-btn" @click="startEditMessage(index)" :title="i18n(currentLanguage, 'chat.editMessage')">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
+                    <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                  </svg>
+                </button>
+                <button class="msg-action-btn msg-action-danger" @click="deleteMessagePair(index)" title="Delete">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="3 6 5 6 21 6"/>
+                    <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
+                  </svg>
+                </button>
+              </template>
             </div>
           </div>
-
-          <!-- Quote -->
-          <div v-if="message.quote" class="message-quote">
-            {{ message.quote }}
-          </div>
-
-          <!-- Content -->
-          <div
-            v-if="message.role === 'assistant'"
-            class="message-content markdown-content"
-            v-html="renderMarkdown(message.content || (isLoading && index === messages.length - 1 ? '' : ''))"
-          ></div>
-          <div v-else class="message-content">
-            {{ getUserMessageDisplayContent(message) }}
-          </div>
-
-          <!-- Typing indicator -->
-          <div v-if="isLoading && index === messages.length - 1 && message.role === 'assistant' && !message.content" class="typing-indicator">
-            <span></span><span></span><span></span>
-          </div>
         </div>
-
-        <!-- Copy button for assistant messages -->
-        <button
-          v-if="message.role === 'assistant' && message.content"
-          class="copy-btn"
-          :class="{ copied: copiedMessageIndex === index }"
-          @click="copyMessage(index)"
-          :title="i18n(currentLanguage, 'chat.copy')"
-        >
-          <svg v-if="copiedMessageIndex !== index" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-            <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
-          </svg>
-          <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <polyline points="20 6 9 17 4 12"/>
-          </svg>
-        </button>
-
-        <!-- Timestamp -->
-        <span class="message-time">{{ formatTime(message.timestamp) }}</span>
       </div>
+
+      <!-- Scroll to bottom button -->
+      <button
+        v-if="showScrollToBottom"
+        class="scroll-to-bottom-btn"
+        @click="handleScrollToBottom"
+        title="Scroll to bottom"
+      >
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="6 9 12 15 18 9"/>
+        </svg>
+      </button>
     </div>
 
     <!-- Browser automation status -->
@@ -2017,6 +2390,7 @@ onUnmounted(() => {
           @click="terminateCurrentGeneration"
           :title="i18n(currentLanguage, 'chat.stopGenerating')"
         >
+          <div class="stop-btn-pulse"></div>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
             <rect x="6" y="6" width="12" height="12" rx="2"/>
           </svg>
@@ -2491,14 +2865,6 @@ onUnmounted(() => {
   }
 }
 
-.message-wrapper:hover .message-time {
-  opacity: 1;
-}
-
-.message-wrapper:hover .copy-btn {
-  opacity: 1;
-}
-
 .message-user {
   align-items: flex-end;
 }
@@ -2507,13 +2873,65 @@ onUnmounted(() => {
   align-items: flex-start;
 }
 
+/* Message row with avatar */
+.message-row {
+  display: flex;
+  gap: var(--spacing-sm);
+  max-width: 95%;
+}
+
+.message-user .message-row {
+  flex-direction: row-reverse;
+}
+
+.message-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+/* Avatar */
+.message-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.avatar-user {
+  background: var(--color-accent);
+  color: var(--color-text-on-accent);
+}
+
+.avatar-assistant {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+}
+
+.message-user .message-avatar {
+  margin-left: auto;
+}
+
+.message-assistant .message-avatar {
+  margin-right: auto;
+}
+
 .message-bubble {
-  max-width: 85%;
+  max-width: 100%;
   padding: var(--spacing-sm) var(--spacing-md);
   border-radius: var(--radius-lg);
   font-size: var(--font-size-md);
   line-height: var(--line-height-normal);
   word-wrap: break-word;
+  overflow-wrap: break-word;
 }
 
 .bubble-user {
@@ -2526,6 +2944,11 @@ onUnmounted(() => {
   background: var(--color-bg-assistant-bubble);
   color: var(--color-text-primary);
   border-bottom-left-radius: var(--radius-xs);
+}
+
+.bubble-error {
+  background: rgba(255, 59, 48, 0.08);
+  border: 1px solid rgba(255, 59, 48, 0.2);
 }
 
 /* Reasoning block */
@@ -2634,42 +3057,190 @@ onUnmounted(() => {
   color: rgba(255, 255, 255, 0.8);
 }
 
-/* Message time */
+/* Message actions row */
+.message-actions-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: 0 var(--spacing-xs);
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+
+.message-wrapper:hover .message-actions-row {
+  opacity: 1;
+}
+
 .message-time {
   font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
-  opacity: 0;
-  transition: opacity var(--transition-fast);
-  padding: 0 var(--spacing-xs);
+  padding: 0;
 }
 
-/* Copy button */
-.copy-btn {
-  position: absolute;
-  top: 0;
-  right: 0;
+.msg-action-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   border: none;
-  background: var(--color-bg-secondary);
+  background: transparent;
   color: var(--color-text-secondary);
   cursor: pointer;
   border-radius: var(--radius-sm);
-  opacity: 0;
   transition: all var(--transition-fast);
-  box-shadow: var(--shadow-sm);
+  padding: 0;
 }
 
-.copy-btn:hover {
+.msg-action-btn:hover {
+  background: var(--color-bg-secondary);
   color: var(--color-text-primary);
-  background: var(--color-bg-tertiary);
 }
 
-.copy-btn.copied {
+.msg-action-btn.copied {
   color: var(--color-success);
+}
+
+.msg-action-danger:hover {
+  color: var(--color-error);
+}
+
+/* Edit message */
+.edit-textarea {
+  width: 100%;
+  padding: var(--spacing-sm);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  font-family: var(--font-body);
+  font-size: var(--font-size-sm);
+  resize: vertical;
+  outline: none;
+  min-height: 60px;
+  line-height: var(--line-height-normal);
+}
+
+.edit-actions {
+  display: flex;
+  gap: var(--spacing-xs);
+  margin-top: var(--spacing-xs);
+  justify-content: flex-end;
+}
+
+.edit-action-btn {
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.edit-action-btn.cancel {
+  background: transparent;
+  color: var(--color-text-secondary);
+}
+
+.edit-action-btn.cancel:hover {
+  background: var(--color-bg-secondary);
+}
+
+.edit-action-btn.save {
+  background: var(--color-accent);
+  color: var(--color-text-on-accent);
+}
+
+.edit-action-btn.save:hover {
+  background: var(--color-accent-hover);
+}
+
+/* Error content with retry */
+.error-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  color: var(--color-error);
+  font-size: var(--font-size-sm);
+}
+
+.retry-btn {
+  align-self: flex-start;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border: 1px solid var(--color-error);
+  background: transparent;
+  color: var(--color-error);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: all var(--transition-fast);
+}
+
+.retry-btn:hover {
+  background: var(--color-error);
+  color: white;
+}
+
+/* Streaming cursor */
+.streaming-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  background: var(--color-accent);
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  animation: cursor-blink 1s step-end infinite;
+}
+
+@keyframes cursor-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* Stop button pulse */
+.stop-btn-pulse {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--color-error);
+  animation: stop-pulse 1.5s ease-in-out infinite;
+  z-index: -1;
+}
+
+@keyframes stop-pulse {
+  0%, 100% { transform: scale(1); opacity: 0.5; }
+  50% { transform: scale(1.3); opacity: 0; }
+}
+
+/* Scroll to bottom button */
+.scroll-to-bottom-btn {
+  position: sticky;
+  bottom: var(--spacing-md);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  background: var(--color-bg-primary);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  border-radius: 50%;
+  box-shadow: var(--shadow-md);
+  transition: all var(--transition-fast);
+  z-index: 5;
+  margin: var(--spacing-sm) auto;
+  align-self: center;
+}
+
+.scroll-to-bottom-btn:hover {
+  background: var(--color-bg-secondary);
+  color: var(--color-text-primary);
+  box-shadow: var(--shadow-lg);
 }
 
 /* Typing indicator */
@@ -2853,6 +3424,7 @@ onUnmounted(() => {
   border-radius: 50%;
   transition: all var(--transition-normal);
   flex-shrink: 0;
+  position: relative;
 }
 
 .send-btn.active {
