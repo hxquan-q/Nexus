@@ -5,7 +5,7 @@ export default defineConfig({
   manifest: {
     name: '__MSG_appName__',
     description: '__MSG_appDescription__',
-    version: '0.3.1',
+    version: '0.3.2',
     minimum_chrome_version: '120',
     default_locale: 'en',
     permissions: [

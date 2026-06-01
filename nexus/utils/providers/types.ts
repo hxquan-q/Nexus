@@ -47,6 +47,7 @@ export interface ChatMessage {
   reasoning?: string;
   timestamp: number;
   reaction?: 'good' | 'bad';
+  pinned?: boolean;
 }
 
 export interface StreamEvent {

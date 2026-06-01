@@ -31,6 +31,7 @@ const emit = defineEmits<{
   (e: 'open-lightbox', dataUrl: string): void;
   (e: 'copy-error', rawError: string): void;
   (e: 'react', index: number, reaction: 'good' | 'bad'): void;
+  (e: 'pin', index: number): void;
 }>();
 
 function getUserMessageDisplayContent(message: ChatMessage): string {
@@ -145,6 +146,15 @@ const isUser = computed(() => props.message.role === 'user');
       <div class="message-body">
         <!-- Message bubble -->
         <div class="message-bubble" :class="[`bubble-${message.role}`, { 'bubble-error': isError, 'bubble-streaming': isLoading && isLast && isAssistant }]">
+          <!-- Pinned indicator -->
+          <div v-if="message.pinned && isAssistant" class="message-pinned-badge">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2">
+              <path d="M12 2v8l4 2v2H8v-2l4-2V2"/>
+              <path d="M8 14l-1 4h10l-1-4"/>
+              <line x1="12" y1="18" x2="12" y2="22"/>
+            </svg>
+            <span>{{ i18n(language, 'chat.pinned') }}</span>
+          </div>
           <!-- Images -->
           <div v-if="message.images && message.images.length" class="message-images">
             <img
@@ -268,6 +278,18 @@ const isUser = computed(() => props.message.role === 'user');
               </svg>
               <svg v-else width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <polyline points="20 6 9 17 4 12"/>
+              </svg>
+            </button>
+            <button
+              class="msg-action-btn"
+              :class="{ 'pin-active': message.pinned }"
+              @click="emit('pin', index)"
+              :title="message.pinned ? i18n(language, 'chat.unpin') : i18n(language, 'chat.pin')"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" :fill="message.pinned ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2">
+                <path d="M12 2v8l4 2v2H8v-2l4-2V2"/>
+                <path d="M8 14l-1 4h10l-1-4"/>
+                <line x1="12" y1="18" x2="12" y2="22"/>
               </svg>
             </button>
             <button
@@ -646,6 +668,27 @@ const isUser = computed(() => props.message.role === 'user');
 
 .reaction-btn:hover {
   color: var(--color-accent);
+}
+
+/* Pin button */
+.msg-action-btn.pin-active {
+  color: var(--color-accent);
+}
+
+/* Pinned badge */
+.message-pinned-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  margin-bottom: var(--spacing-xs);
+  background: var(--color-accent);
+  color: var(--color-text-on-accent);
+  border-radius: var(--radius-full);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  line-height: 1;
 }
 
 /* Edit message */

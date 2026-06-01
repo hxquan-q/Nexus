@@ -147,6 +147,12 @@ const renderer = {
       `<span class="hljs-ln-num">${i + 1}</span>`
     ).join('\n');
 
+    // Build markdown-format code for "Copy as Markdown"
+    const markdownFormat = language
+      ? `\`\`\`${language}\n${normalizedCode}\n\`\`\``
+      : `\`\`\`\n${normalizedCode}\n\`\`\``;
+    const encodedMarkdownFormat = encodeData(markdownFormat);
+
     return `
       <div class="markdown-code-block">
         <div class="markdown-code-toolbar">
@@ -168,6 +174,23 @@ const renderer = {
                 <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
               </svg>
               <span class="markdown-code-btn-label">Copy</span>
+            </button>
+            <button
+              type="button"
+              class="markdown-code-btn markdown-code-btn-md"
+              data-markdown-action="copy-markdown"
+              data-code="${encodedMarkdownFormat}"
+              data-default-label="MD"
+              data-copied-label="Copied!"
+              title="Copy as Markdown"
+              aria-label="Copy as Markdown"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/>
+                <line x1="9" y1="13" x2="15" y2="13"/>
+              </svg>
+              <span class="markdown-code-btn-label">MD</span>
             </button>
             <button
               type="button"

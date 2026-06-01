@@ -260,7 +260,7 @@ function cancelRename() {
         <input type="file" accept=".json" style="display: none" @change="(e) => emit('import', e)" />
       </label>
     </div>
-    <div class="history-footer">Nexus v0.3.1</div>
+    <div class="history-footer">Nexus v0.3.2</div>
   </div>
 </template>
 

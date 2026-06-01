@@ -694,6 +694,9 @@ async function handleMarkdownActionClick(event: MouseEvent): Promise<void> {
   if (action === 'copy-code') {
     const copied = await writeTextToClipboard(code);
     if (copied) flashMarkdownCodeButton(actionButton);
+  } else if (action === 'copy-markdown') {
+    const copied = await writeTextToClipboard(code);
+    if (copied) flashMarkdownCodeButton(actionButton);
   } else if (action === 'expand-code') {
     openFullscreenCodeBlock(code, language);
   }
@@ -1381,6 +1384,37 @@ function handleMessageReaction(index: number, reaction: 'good' | 'bad'): void {
   }
   triggerRef(messages);
   debouncedSave();
+}
+
+function toggleMessagePin(index: number): void {
+  const message = messages.value[index];
+  if (!message || message.role !== 'assistant') return;
+  message.pinned = !message.pinned;
+  triggerRef(messages);
+  debouncedSave();
+}
+
+const pinnedMessages = computed(() => {
+  return messages.value
+    .map((msg, idx) => ({ message: msg, index: idx }))
+    .filter(({ message }) => message.pinned);
+});
+
+function scrollToMessage(index: number): void {
+  nextTick(() => {
+    if (!chatAreaRef.value) return;
+    const messageElements = chatAreaRef.value.querySelectorAll('.message-wrapper');
+    const targetEl = messageElements[index] as HTMLElement;
+    if (targetEl) {
+      targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // Brief highlight effect
+      targetEl.style.transition = 'background 200ms ease';
+      targetEl.style.background = 'var(--color-accent-bg)';
+      setTimeout(() => {
+        targetEl.style.background = '';
+      }, 1200);
+    }
+  });
 }
 
 function terminateCurrentGeneration(): void {
@@ -2282,6 +2316,29 @@ onUnmounted(() => {
         </div>
       </div>
 
+      <!-- Pinned messages section -->
+      <div v-if="pinnedMessages.length > 0" class="pinned-section">
+        <div class="pinned-section-header">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2">
+            <path d="M12 2v8l4 2v2H8v-2l4-2V2"/>
+            <path d="M8 14l-1 4h10l-1-4"/>
+            <line x1="12" y1="18" x2="12" y2="22"/>
+          </svg>
+          <span>{{ i18n(currentLanguage, 'chat.pinnedMessages') }}</span>
+          <span class="pinned-count">{{ pinnedMessages.length }}</span>
+        </div>
+        <div class="pinned-items">
+          <button
+            v-for="{ message, index } in pinnedMessages"
+            :key="index"
+            class="pinned-item"
+            @click="scrollToMessage(index)"
+          >
+            <span class="pinned-item-preview">{{ (message.content || '').substring(0, 80).replace(/[#*`\n]/g, ' ').trim() }}{{ (message.content || '').length > 80 ? '...' : '' }}</span>
+          </button>
+        </div>
+      </div>
+
       <!-- Messages -->
       <ChatMessage
         v-for="(message, index) in messages"
@@ -2307,6 +2364,7 @@ onUnmounted(() => {
         @open-lightbox="openLightbox"
         @copy-error="(rawError) => { writeTextToClipboard(rawError).then((ok) => { if (ok) showToast(i18n(currentLanguage, 'chat.copied')); }); }"
         @react="handleMessageReaction"
+        @pin="toggleMessagePin"
       />
 
       <!-- Scroll to bottom button -->
@@ -2612,6 +2670,71 @@ onUnmounted(() => {
 
 .chat-area > :deep(.message-wrapper.message-user:last-child) {
   margin-bottom: 0;
+}
+
+/* Pinned messages section */
+.pinned-section {
+  margin-bottom: var(--spacing-md);
+  padding: var(--spacing-sm);
+  background: var(--color-bg-secondary);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+}
+
+.pinned-section-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--color-accent);
+  margin-bottom: var(--spacing-xs);
+}
+
+.pinned-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  background: var(--color-accent);
+  color: var(--color-text-on-accent);
+  border-radius: var(--radius-full);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.pinned-items {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pinned-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.pinned-item:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.pinned-item-preview {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 /* Empty state */

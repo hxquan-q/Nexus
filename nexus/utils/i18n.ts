@@ -435,6 +435,16 @@ const translations: Record<Language, Record<TranslationKey, string>> = {
     'greeting.evening': 'Good evening! Need any help?',
     'greeting.night': 'Burning the midnight oil? I\'m here to help!',
 
+    // ===== Message Pinning =====
+    'chat.pin': 'Pin message',
+    'chat.unpin': 'Unpin message',
+    'chat.pinnedMessages': 'Pinned Messages',
+    'chat.noPinnedMessages': 'No pinned messages yet.',
+    'chat.pinned': 'Pinned',
+
+    // ===== Code Block =====
+    'chat.copyAsMarkdown': 'Copy as Markdown',
+
     // ===== Version =====
     'version.display': 'Nexus v{version}',
   },
@@ -864,6 +874,16 @@ const translations: Record<Language, Record<TranslationKey, string>> = {
     'greeting.afternoon': '下午好！在想什么？',
     'greeting.evening': '晚上好！需要帮助吗？',
     'greeting.night': '夜深了，我还在！有什么需要？',
+
+    // ===== Message Pinning =====
+    'chat.pin': '置顶消息',
+    'chat.unpin': '取消置顶',
+    'chat.pinnedMessages': '置顶消息',
+    'chat.noPinnedMessages': '暂无置顶消息。',
+    'chat.pinned': '已置顶',
+
+    // ===== Code Block =====
+    'chat.copyAsMarkdown': '复制为 Markdown',
 
     // ===== Version =====
     'version.display': 'Nexus v{version}',
