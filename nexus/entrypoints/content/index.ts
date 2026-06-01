@@ -41,6 +41,34 @@ import { t, type Language } from '../../utils/i18n';
 let selectionObserver: SelectionObserver | null = null;
 let currentLang: Language = 'en';
 let pendingPopupOptions: { title: string; anchorRect: DOMRect | null; mousePoint: { x: number; y: number } | null } | null = null;
+let isDestroyed = false;
+
+// ============================================================
+// Cleanup
+// ============================================================
+
+/**
+ * Clean up all content script resources.
+ * Called when the extension is reloaded or disabled.
+ */
+function cleanup(): void {
+  if (isDestroyed) return;
+  isDestroyed = true;
+
+  if (selectionObserver) {
+    selectionObserver.disconnect();
+    selectionObserver = null;
+  }
+
+  destroyToolbar();
+  destroyPopupHost();
+  destroyOverlay();
+  destroyShortcuts();
+  destroyFloatingBall();
+  pendingPopupOptions = null;
+
+  console.log('[Nexus] Content script cleaned up');
+}
 
 // ============================================================
 // Initialization

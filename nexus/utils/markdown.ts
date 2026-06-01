@@ -10,7 +10,49 @@
 
 import { Marked } from 'marked';
 import katex from 'katex';
-import hljs from 'highlight.js';
+import hljs from 'highlight.js/lib/core';
+import javascript from 'highlight.js/lib/languages/javascript';
+import typescript from 'highlight.js/lib/languages/typescript';
+import python from 'highlight.js/lib/languages/python';
+import java from 'highlight.js/lib/languages/java';
+import c from 'highlight.js/lib/languages/c';
+import cpp from 'highlight.js/lib/languages/cpp';
+import css from 'highlight.js/lib/languages/css';
+import xml from 'highlight.js/lib/languages/xml';
+import json from 'highlight.js/lib/languages/json';
+import yaml from 'highlight.js/lib/languages/yaml';
+import bash from 'highlight.js/lib/languages/bash';
+import sql from 'highlight.js/lib/languages/sql';
+import markdown from 'highlight.js/lib/languages/markdown';
+import diff from 'highlight.js/lib/languages/diff';
+import go from 'highlight.js/lib/languages/go';
+import rust from 'highlight.js/lib/languages/rust';
+
+// Register only the languages we need
+hljs.registerLanguage('javascript', javascript);
+hljs.registerLanguage('js', javascript);
+hljs.registerLanguage('typescript', typescript);
+hljs.registerLanguage('ts', typescript);
+hljs.registerLanguage('python', python);
+hljs.registerLanguage('py', python);
+hljs.registerLanguage('java', java);
+hljs.registerLanguage('c', c);
+hljs.registerLanguage('cpp', cpp);
+hljs.registerLanguage('css', css);
+hljs.registerLanguage('html', xml);
+hljs.registerLanguage('xml', xml);
+hljs.registerLanguage('json', json);
+hljs.registerLanguage('yaml', yaml);
+hljs.registerLanguage('yml', yaml);
+hljs.registerLanguage('bash', bash);
+hljs.registerLanguage('shell', bash);
+hljs.registerLanguage('sh', bash);
+hljs.registerLanguage('sql', sql);
+hljs.registerLanguage('markdown', markdown);
+hljs.registerLanguage('md', markdown);
+hljs.registerLanguage('diff', diff);
+hljs.registerLanguage('go', go);
+hljs.registerLanguage('rust', rust);
 
 function escapeHtml(value: string): string {
   return value
@@ -199,11 +241,31 @@ const markdownParser = new Marked({
 });
 
 /**
+ * Sanitize rendered HTML to prevent XSS attacks.
+ * Removes dangerous elements while preserving safe content.
+ */
+function sanitizeHtml(html: string): string {
+  return html
+    // Remove script tags and their content
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+    // Remove dangerous attributes (event handlers)
+    .replace(/\s*on\w+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]*)/gi, '')
+    // Remove javascript: URLs
+    .replace(/href\s*=\s*(?:"javascript:[^"]*"|'javascript:[^']*')/gi, 'href="#"')
+    // Remove data: URLs in src that could be vectors (but keep data:image which is legitimate)
+    .replace(/src\s*=\s*(?:"data:(?!image\/)[^"]*"|'data:(?!image\/)[^']*')/gi, '')
+    // Remove iframe, object, embed, form tags
+    .replace(/<(iframe|object|embed|form|input|textarea|select|button|meta|link|base)\b[^>]*>/gi, '')
+    .replace(/<\/(iframe|object|embed|form|input|textarea|select|button|meta|link|base)>/gi, '');
+}
+
+/**
  * Render markdown content to HTML.
  */
 export function renderMarkdown(content: string): string {
   if (!content) return '';
-  return markdownParser.parse(content) as string;
+  const raw = markdownParser.parse(content) as string;
+  return sanitizeHtml(raw);
 }
 
 /**

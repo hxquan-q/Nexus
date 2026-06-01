@@ -121,6 +121,29 @@ const showAddProvider = ref(false);
 const editingProvider = ref<StoredProvider | null>(null);
 const loadingModels = ref(false);
 const activeProviderId = ref<string | null>(null);
+const saveToast = ref<string | null>(null);
+let saveToastTimer: ReturnType<typeof setTimeout> | null = null;
+
+function showSaveToast(message: string): void {
+  if (saveToastTimer) clearTimeout(saveToastTimer);
+  saveToast.value = message;
+  saveToastTimer = setTimeout(() => {
+    saveToast.value = null;
+    saveToastTimer = null;
+  }, 2000);
+}
+
+function validateProviderForm(p: StoredProvider): string | null {
+  if (!p.name.trim()) return 'Provider name is required';
+  if (!p.baseUrl.trim()) return 'Base URL is required';
+  if (!p.apiKey.trim()) return 'API Key is required';
+  try {
+    new URL(p.baseUrl);
+  } catch {
+    return 'Base URL must be a valid URL';
+  }
+  return null;
+}
 
 const providerTypes: { value: ProviderType; label: string }[] = [
   { value: 'openai', label: 'OpenAI' },
@@ -165,7 +188,11 @@ function cancelEdit() {
 
 async function saveProviderForm() {
   const p = formProvider.value;
-  if (!p.name || !p.baseUrl || !p.apiKey) return;
+  const validationError = validateProviderForm(p);
+  if (validationError) {
+    showSaveToast(validationError);
+    return;
+  }
 
   if (p.models.length > 0 && !p.selectedModel) {
     p.selectedModel = p.models[0];
@@ -175,6 +202,7 @@ async function saveProviderForm() {
   providers.value = await getAllProviders();
   showAddProvider.value = false;
   editingProvider.value = null;
+  showSaveToast('Provider saved successfully');
 }
 
 async function removeProvider(id: string) {
@@ -324,12 +352,22 @@ function cancelMcpForm() {
 
 async function saveMcpServerForm() {
   const s = formMcpServer.value;
-  if (!s.name || !s.url) return;
+  if (!s.name || !s.url) {
+    showSaveToast('Server name and URL are required');
+    return;
+  }
+  try {
+    new URL(s.url);
+  } catch {
+    showSaveToast('Server URL must be a valid URL');
+    return;
+  }
   await saveMcpServer(s);
   mcpServers.value = await getMcpServers();
   showMcpForm.value = false;
   editingMcpServer.value = null;
   mcpTestResult.value = null;
+  showSaveToast('MCP server saved successfully');
 }
 
 async function removeMcpServer(id: string) {
@@ -667,6 +705,11 @@ onMounted(async () => {
 
 <template>
   <div class="options-page" @keydown="handleShortcutKeydown">
+    <!-- Toast notification -->
+    <div v-if="saveToast" class="options-toast">
+      {{ saveToast }}
+    </div>
+
     <!-- Sidebar -->
     <nav class="sidebar">
       <div class="sidebar-logo">
@@ -932,6 +975,7 @@ onMounted(async () => {
             <div class="provider-info">
               <div class="provider-header">
                 <span class="provider-name">{{ server.name }}</span>
+                <span class="mcp-status-dot" :class="{ connected: server.enabled }"></span>
                 <span class="provider-type-badge">{{ server.authType }}</span>
                 <label class="toggle-mini">
                   <input
@@ -1580,6 +1624,20 @@ onMounted(async () => {
   color: white;
 }
 
+/* MCP status indicator */
+.mcp-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-error);
+  flex-shrink: 0;
+  transition: background 200ms ease;
+}
+
+.mcp-status-dot.connected {
+  background: var(--color-success);
+}
+
 /* Settings sections */
 .settings-section {
   margin-bottom: var(--spacing-lg);
@@ -1928,5 +1986,33 @@ onMounted(async () => {
   padding: var(--spacing-xl);
   text-align: center;
   color: var(--color-text-secondary);
+}
+
+/* Toast notification */
+.options-toast {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  font-size: var(--font-size-sm);
+  z-index: 500;
+  animation: options-toast-in 200ms ease, options-toast-out 200ms ease 1800ms forwards;
+  max-width: 320px;
+  pointer-events: none;
+}
+
+@keyframes options-toast-in {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes options-toast-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
 }
 </style>

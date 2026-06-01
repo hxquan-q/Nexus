@@ -78,6 +78,12 @@ const currentLanguage = ref<Language>('en');
 // Thinking/reasoning expanded state
 const reasoningExpanded = ref<Record<number, boolean>>({});
 
+// Image lightbox
+const lightboxImage = ref<string | null>(null);
+
+// History search
+const historySearchQuery = ref('');
+
 // Copied message feedback
 const copiedMessageIndex = ref<number | null>(null);
 
@@ -106,6 +112,23 @@ let markdownActionClickHandler: ((event: MouseEvent) => void) | null = null;
 let globalKeydownHandler: ((event: KeyboardEvent) => void) | null = null;
 const selectionQuoteEnabled = ref(true);
 const selectionQuotePopup = ref({ visible: false, x: 0, y: 0, text: '' });
+
+// Debounced save timer
+let saveTimer: ReturnType<typeof setTimeout> | null = null;
+const SAVE_DEBOUNCE_MS = 300;
+
+// Toast notification system
+const toastMessage = ref<string | null>(null);
+let toastTimer: ReturnType<typeof setTimeout> | null = null;
+
+function showToast(message: string, duration: number = 2000): void {
+  if (toastTimer) clearTimeout(toastTimer);
+  toastMessage.value = message;
+  toastTimer = setTimeout(() => {
+    toastMessage.value = null;
+    toastTimer = null;
+  }, duration);
+}
 
 // Browser automation state
 const browserAutomationActive = ref(false);
@@ -174,12 +197,38 @@ const allModelOptions = computed(() => {
   return options;
 });
 
+const filteredModelOptions = computed(() => {
+  const query = modelSearchQuery.value.trim().toLowerCase();
+  if (!query) return allModelOptions.value;
+  return allModelOptions.value.filter(
+    (opt) =>
+      opt.model.toLowerCase().includes(query) ||
+      opt.providerName.toLowerCase().includes(query)
+  );
+});
+
 const hasPendingImages = computed(() => pendingImages.value.length > 0);
 const hasPendingFiles = computed(() => pendingFiles.value.length > 0);
 const totalPendingAttachments = computed(() => pendingImages.value.length + pendingFiles.value.length);
 const canSendMessage = computed(() => {
   return !isLoading.value && (inputText.value.trim().length > 0 || hasPendingImages.value || hasPendingFiles.value);
 });
+
+const filteredSessions = computed(() => {
+  const query = historySearchQuery.value.trim().toLowerCase();
+  if (!query) return sessions.value;
+  return sessions.value.filter((s) =>
+    s.title.toLowerCase().includes(query)
+  );
+});
+
+function openLightbox(dataUrl: string) {
+  lightboxImage.value = dataUrl;
+}
+
+function closeLightbox() {
+  lightboxImage.value = null;
+}
 
 // ============================================================
 // Helpers
@@ -341,8 +390,12 @@ async function handleMarkdownActionClick(event: MouseEvent): Promise<void> {
 }
 
 function handleGlobalKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Escape' && fullscreenCodeBlock.value) {
-    closeFullscreenCodeBlock();
+  if (event.key === 'Escape') {
+    if (lightboxImage.value) {
+      closeLightbox();
+    } else if (fullscreenCodeBlock.value) {
+      closeFullscreenCodeBlock();
+    }
   }
 }
 
@@ -1044,6 +1097,11 @@ async function sendMessage() {
     chatAbortController.value = null;
     isLoading.value = false;
     toolExecutionStatus.value = null;
+    // Clear any pending debounced save and do a final save
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+    }
     await saveCurrentSession();
     scrollToBottom();
   }
@@ -1080,6 +1138,18 @@ async function saveCurrentSession() {
   };
   await updateSession(sessionToSave);
   await loadInitialSessions();
+}
+
+/**
+ * Debounced version of saveCurrentSession.
+ * Prevents excessive IndexedDB writes during streaming.
+ */
+function debouncedSave() {
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    saveCurrentSession();
+  }, SAVE_DEBOUNCE_MS);
 }
 
 async function loadInitialSessions() {
@@ -1187,14 +1257,14 @@ async function handleImportSession(event: Event) {
     const data = await readImportFile(file);
     const validation = validateImportData(data);
     if (!validation.valid) {
-      alert(`${i18n(currentLanguage.value, 'data.invalidFile')}: ${validation.errors.join(', ')}`);
+      showToast(`${i18n(currentLanguage.value, 'data.invalidFile')}: ${validation.errors.join(', ')}`, 3000);
       return;
     }
     const count = await importSessions(data, 'merge');
-    alert(i18n(currentLanguage.value, 'data.importSuccess', { count }));
+    showToast(i18n(currentLanguage.value, 'data.importSuccess', { count }));
     await loadInitialSessions();
   } catch (error) {
-    alert(i18n(currentLanguage.value, 'data.importFailed', { error: error instanceof Error ? error.message : 'Unknown error' }));
+    showToast(i18n(currentLanguage.value, 'data.importFailed', { error: error instanceof Error ? error.message : 'Unknown error' }), 3000);
   } finally {
     input.value = '';
   }
@@ -1243,7 +1313,8 @@ async function toggleTheme() {
 }
 
 // ============================================================
-// Selection quote in sidepanel
+// Model selector search
+const modelSearchQuery = ref('');
 // ============================================================
 
 function getSelectionEndPosition(): { x: number; y: number } | null {
@@ -1463,6 +1534,11 @@ async function handleContentImageMessage(imageUrl: string, prompt: string): Prom
     chatAbortController.value = null;
     isLoading.value = false;
     toolExecutionStatus.value = null;
+    // Clear any pending debounced save and do a final save
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+    }
     await saveCurrentSession();
     scrollToBottom();
   }
@@ -1550,6 +1626,8 @@ onMounted(async () => {
 
 onUnmounted(() => {
   chatAbortController.value?.abort();
+  if (saveTimer) clearTimeout(saveTimer);
+  if (toastTimer) clearTimeout(toastTimer);
   unwatchProviders.value?.();
   unwatchActiveProviderId.value?.();
   unwatchLanguage.value?.();
@@ -1583,7 +1661,7 @@ onUnmounted(() => {
       </div>
 
       <div class="header-center">
-        <button class="model-selector-btn" @click="showModelSelector = !showModelSelector">
+        <button class="model-selector-btn" @click="showModelSelector = !showModelSelector; modelSearchQuery = ''">
           <span class="model-name">{{ activeModelName }}</span>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <polyline points="6 9 12 15 18 9"/>
@@ -1629,8 +1707,21 @@ onUnmounted(() => {
 
       <!-- Model selector dropdown -->
       <div v-if="showModelSelector" class="model-selector-dropdown" @click.stop>
+        <div class="model-search-row">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"/>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+          <input
+            v-model="modelSearchQuery"
+            type="text"
+            class="model-search-input"
+            placeholder="Search models..."
+            @click.stop
+          />
+        </div>
         <div
-          v-for="option in allModelOptions"
+          v-for="option in filteredModelOptions"
           :key="`${option.providerId}-${option.model}`"
           class="model-option"
           :class="{ active: activeProviderId === option.providerId && activeModelName === option.model }"
@@ -1639,8 +1730,8 @@ onUnmounted(() => {
           <span class="model-option-provider">{{ option.providerName }}</span>
           <span class="model-option-name">{{ option.model }}</span>
         </div>
-        <div v-if="allModelOptions.length === 0" class="model-option-empty">
-          {{ i18n(currentLanguage, 'model.noModels') }}
+        <div v-if="filteredModelOptions.length === 0" class="model-option-empty">
+          {{ allModelOptions.length === 0 ? i18n(currentLanguage, 'model.noModels') : 'No matching models' }}
         </div>
       </div>
     </header>
@@ -1649,15 +1740,18 @@ onUnmounted(() => {
     <div class="chat-area" ref="chatAreaRef">
       <!-- Empty state -->
       <div v-if="messages.length === 0" class="empty-state">
-        <div class="empty-state-logo">
-          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" stroke-width="1.5">
-            <path d="M12 2L2 7l10 5 10-5-10-5z"/>
-            <path d="M2 17l10 5 10-5"/>
-            <path d="M2 12l10 5 10-5"/>
-          </svg>
+        <div class="empty-state-bg"></div>
+        <div class="empty-state-content">
+          <div class="empty-state-logo">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" stroke-width="1.5">
+              <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+              <path d="M2 17l10 5 10-5"/>
+              <path d="M2 12l10 5 10-5"/>
+            </svg>
+          </div>
+          <h2 class="empty-state-title">Nexus</h2>
+          <p class="empty-state-subtitle">{{ i18n(currentLanguage, 'empty.subtitle') }}</p>
         </div>
-        <h2 class="empty-state-title">Nexus</h2>
-        <p class="empty-state-subtitle">{{ i18n(currentLanguage, 'empty.subtitle') }}</p>
       </div>
 
       <!-- Messages -->
@@ -1693,6 +1787,7 @@ onUnmounted(() => {
               :src="image.dataUrl"
               :alt="image.name"
               class="message-image"
+              @click="openLightbox(image.dataUrl)"
             />
           </div>
 
@@ -1864,9 +1959,21 @@ onUnmounted(() => {
             </svg>
           </button>
         </div>
+        <div class="history-search-row">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"/>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+          <input
+            v-model="historySearchQuery"
+            type="text"
+            class="history-search-input"
+            :placeholder="i18n(currentLanguage, 'history.search')"
+          />
+        </div>
         <div class="history-list" ref="sessionListRef" @scroll="handleSessionListScroll">
           <button
-            v-for="session in sessions"
+            v-for="session in filteredSessions"
             :key="session.id"
             class="history-item"
             :class="{ active: currentSession?.id === session.id }"
@@ -1971,6 +2078,24 @@ onUnmounted(() => {
         </div>
       </div>
     </div>
+
+    <!-- Image lightbox -->
+    <div v-if="lightboxImage" class="lightbox-overlay" @click="closeLightbox">
+      <div class="lightbox-container" @click.stop>
+        <button class="lightbox-close" @click="closeLightbox">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+        <img :src="lightboxImage" alt="Preview" class="lightbox-image" />
+      </div>
+    </div>
+
+    <!-- Toast notification -->
+    <div v-if="toastMessage" class="toast-notification">
+      {{ toastMessage }}
+    </div>
   </div>
 </template>
 
@@ -2072,6 +2197,34 @@ onUnmounted(() => {
   padding: var(--spacing-xs) 0;
 }
 
+.model-search-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-xs) var(--spacing-md);
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  position: sticky;
+  top: 0;
+  background: var(--color-bg-primary);
+  z-index: 1;
+}
+
+.model-search-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  font-family: var(--font-body);
+  outline: none;
+  padding: var(--spacing-xs) 0;
+}
+
+.model-search-input::placeholder {
+  color: var(--color-text-secondary);
+}
+
 .model-option {
   display: flex;
   flex-direction: column;
@@ -2110,6 +2263,7 @@ onUnmounted(() => {
 .chat-area {
   flex: 1;
   overflow-y: auto;
+  scroll-behavior: smooth;
   padding: var(--spacing-md);
   display: flex;
   flex-direction: column;
@@ -2125,6 +2279,25 @@ onUnmounted(() => {
   justify-content: center;
   gap: var(--spacing-sm);
   color: var(--color-text-secondary);
+  position: relative;
+}
+
+.empty-state-bg {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 50% 40%, rgba(0, 122, 255, 0.06), transparent 70%);
+  pointer-events: none;
+}
+
+[data-theme="dark"] .empty-state-bg {
+  background: radial-gradient(circle at 50% 40%, rgba(10, 132, 255, 0.08), transparent 70%);
+}
+
+.empty-state-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-sm);
 }
 
 .empty-state-logo {
@@ -2148,6 +2321,18 @@ onUnmounted(() => {
   flex-direction: column;
   gap: var(--spacing-xs);
   position: relative;
+  animation: message-fade-in 200ms ease both;
+}
+
+@keyframes message-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .message-wrapper:hover .message-time {
@@ -2235,6 +2420,13 @@ onUnmounted(() => {
   max-height: 200px;
   border-radius: var(--radius-sm);
   object-fit: cover;
+  cursor: pointer;
+  transition: transform 150ms ease, box-shadow 150ms ease;
+}
+
+.message-image:hover {
+  transform: scale(1.02);
+  box-shadow: var(--shadow-md);
 }
 
 /* Message file attachments */
@@ -2923,5 +3115,119 @@ onUnmounted(() => {
   font-family: var(--font-mono);
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* History search */
+.history-search-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-xs) var(--spacing-md);
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+}
+
+.history-search-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  font-family: var(--font-body);
+  outline: none;
+  padding: var(--spacing-xs) 0;
+}
+
+.history-search-input::placeholder {
+  color: var(--color-text-secondary);
+}
+
+/* Image lightbox */
+.lightbox-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.85);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--spacing-lg);
+  animation: lightbox-fade-in 150ms ease;
+}
+
+@keyframes lightbox-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.lightbox-container {
+  position: relative;
+  max-width: 100%;
+  max-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.lightbox-close {
+  position: absolute;
+  top: -12px;
+  right: -12px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255, 255, 255, 0.15);
+  color: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 150ms ease;
+  z-index: 10;
+}
+
+.lightbox-close:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.lightbox-image {
+  max-width: 100%;
+  max-height: 85vh;
+  border-radius: var(--radius-md);
+  object-fit: contain;
+}
+
+/* Toast notification */
+.toast-notification {
+  position: fixed;
+  bottom: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  font-size: var(--font-size-sm);
+  z-index: 300;
+  animation: toast-in 200ms ease, toast-out 200ms ease 1800ms forwards;
+  max-width: 90%;
+  text-align: center;
+  pointer-events: none;
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(8px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+@keyframes toast-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
 }
 </style>

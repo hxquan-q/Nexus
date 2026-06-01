@@ -35,20 +35,25 @@ function parseError(error: unknown): ApiError {
   if (error instanceof OpenAI.APIError) {
     const status = error.status;
     if (status === 401 || status === 403) {
-      return new ApiError('Invalid API key', 'AUTH_ERROR', false, error);
+      return new ApiError('Authentication failed. Please check your API key.', 'AUTH_ERROR', false, error);
     }
     if (status === 429) {
-      return new ApiError('Rate limited', 'RATE_LIMIT', true, error);
+      return new ApiError('Rate limited by the provider. Please wait a moment and try again.', 'RATE_LIMIT', true, error);
     }
     if (status === 404) {
-      return new ApiError('Model not found', 'MODEL_NOT_FOUND', false, error);
+      return new ApiError('Model not found. The selected model may not be available.', 'MODEL_NOT_FOUND', false, error);
     }
     if (status === 400) {
-      return new ApiError('Invalid request', 'INVALID_REQUEST', false, error);
+      return new ApiError('Invalid request. The model may not support this feature.', 'INVALID_REQUEST', false, error);
     }
     if (status && status >= 500) {
-      return new ApiError('Server error', 'SERVER_ERROR', true, error);
+      return new ApiError('The AI provider server is experiencing issues. Please try again later.', 'SERVER_ERROR', true, error);
     }
+  }
+
+  // Network errors
+  if (error instanceof TypeError && error.message.includes('fetch')) {
+    return new ApiError('Network error. Please check your internet connection.', 'NETWORK_ERROR', true, error);
   }
 
   const message = error instanceof Error ? error.message : String(error);
@@ -336,7 +341,11 @@ export async function* streamChat(
     try {
       for await (const chunk of stream) {
         ensureNotAborted();
+
+        // Guard against malformed chunks
+        if (!chunk?.choices?.length) continue;
         const delta = chunk.choices[0]?.delta;
+        if (!delta) continue;
 
         // Handle reasoning/thinking content (DeepSeek reasoning_content)
         const reasoningContent = (delta as any)?.reasoning_content;
@@ -355,6 +364,7 @@ export async function* streamChat(
         if (delta?.tool_calls) {
           for (const toolCallDelta of delta.tool_calls) {
             const idx = toolCallDelta.index;
+            if (typeof idx !== 'number') continue;
             if (!toolCallsMap.has(idx)) {
               toolCallsMap.set(idx, {
                 id: toolCallDelta.id || '',
@@ -370,6 +380,13 @@ export async function* streamChat(
         }
       }
     } catch (streamError) {
+      // If we already received content, preserve it instead of losing everything
+      if (fullContent || fullReasoning) {
+        // Yield what we have and stop gracefully
+        lastApiMessages = [...apiMessages];
+        yield { type: 'done' };
+        return;
+      }
       if (abortSignal?.aborted) {
         throw new ApiError('Aborted by user', 'USER_ABORTED', false, streamError);
       }
