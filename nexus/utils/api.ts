@@ -1,0 +1,507 @@
+/**
+ * Multi-provider streaming API layer
+ * Uses the OpenAI SDK with provider-specific configuration
+ * Supports tool calling (ReAct loop) for browser control and extraction tools.
+ */
+
+import OpenAI from 'openai';
+import type { ChatCompletionMessageParam, ChatCompletionTool } from 'openai/resources/chat/completions';
+import type { AIProvider, ChatMessage, ChatImage, StreamEvent, ToolCall, ToolResult } from './providers/types';
+import { getAdapterConfig, isOpenAICompatible } from './providers/adapters';
+
+// ============================================================
+// Error handling
+// ============================================================
+
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public readonly code: string,
+    public readonly retryable: boolean,
+    public readonly originalError?: unknown,
+  ) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
+function parseError(error: unknown): ApiError {
+  if (error instanceof ApiError) return error;
+
+  if (error instanceof DOMException && error.name === 'AbortError') {
+    return new ApiError('Request aborted', 'USER_ABORTED', false, error);
+  }
+
+  if (error instanceof OpenAI.APIError) {
+    const status = error.status;
+    if (status === 401 || status === 403) {
+      return new ApiError('Invalid API key', 'AUTH_ERROR', false, error);
+    }
+    if (status === 429) {
+      return new ApiError('Rate limited', 'RATE_LIMIT', true, error);
+    }
+    if (status === 404) {
+      return new ApiError('Model not found', 'MODEL_NOT_FOUND', false, error);
+    }
+    if (status === 400) {
+      return new ApiError('Invalid request', 'INVALID_REQUEST', false, error);
+    }
+    if (status && status >= 500) {
+      return new ApiError('Server error', 'SERVER_ERROR', true, error);
+    }
+  }
+
+  const message = error instanceof Error ? error.message : String(error);
+  return new ApiError(message, 'UNKNOWN', false, error);
+}
+
+// ============================================================
+// Retry helpers
+// ============================================================
+
+export interface RetryConfig {
+  maxRetries: number;
+  baseDelay: number;
+  maxDelay: number;
+  timeout: number;
+}
+
+const DEFAULT_RETRY_CONFIG: RetryConfig = {
+  maxRetries: 3,
+  baseDelay: 1000,
+  maxDelay: 10000,
+  timeout: 60000,
+};
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getRetryDelay(attempt: number, config: RetryConfig): number {
+  const exponentialDelay = config.baseDelay * Math.pow(2, attempt);
+  const jitter = Math.random() * 1000;
+  return Math.min(exponentialDelay + jitter, config.maxDelay);
+}
+
+function createTimeoutController(
+  timeout: number,
+  externalSignal?: AbortSignal,
+): { controller: AbortController; clear: () => void } {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+  const handleExternalAbort = () => controller.abort();
+
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      controller.abort();
+    } else {
+      externalSignal.addEventListener('abort', handleExternalAbort, { once: true });
+    }
+  }
+
+  return {
+    controller,
+    clear: () => {
+      clearTimeout(timeoutId);
+      if (externalSignal) {
+        externalSignal.removeEventListener('abort', handleExternalAbort);
+      }
+    },
+  };
+}
+
+// ============================================================
+// Message conversion
+// ============================================================
+
+interface ApiMessageTextPart {
+  type: 'text';
+  text: string;
+}
+
+interface ApiMessageImagePart {
+  type: 'image_url';
+  image_url: { url: string };
+}
+
+type ApiMessageContent = string | Array<ApiMessageTextPart | ApiMessageImagePart> | null;
+
+export interface ApiMessage {
+  role: 'system' | 'user' | 'assistant' | 'tool';
+  content: ApiMessageContent;
+  reasoning?: string | null;
+  tool_calls?: Array<{
+    id: string;
+    type: 'function';
+    function: { name: string; arguments: string };
+  }>;
+  tool_call_id?: string;
+  name?: string;
+}
+
+let lastApiMessages: ApiMessage[] = [];
+
+export function getLastApiMessages(): ApiMessage[] {
+  return lastApiMessages;
+}
+
+export function setLastApiMessages(messages: ApiMessage[]): void {
+  lastApiMessages = messages;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function getQuotedText(message: Pick<ChatMessage, 'content' | 'quote'>): string {
+  return message.quote ? `[Quote: "${message.quote}"]\n\n${message.content}` : message.content;
+}
+
+function buildUserMessageContent(
+  message: Pick<ChatMessage, 'content' | 'quote' | 'images'>,
+  allowImages: boolean,
+): ApiMessageContent {
+  const text = getQuotedText(message);
+  if (!allowImages || !message.images?.length) return text;
+
+  const parts: Array<ApiMessageTextPart | ApiMessageImagePart> = [];
+  if (text.trim().length > 0) {
+    parts.push({ type: 'text', text });
+  }
+  for (const image of message.images) {
+    if (image.dataUrl) {
+      parts.push({ type: 'image_url', image_url: { url: image.dataUrl } });
+    }
+  }
+  return parts;
+}
+
+function convertToOpenAIMessages(messages: ApiMessage[]): ChatCompletionMessageParam[] {
+  return messages.map((m) => {
+    if (m.role === 'tool') {
+      return {
+        role: 'tool' as const,
+        content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
+        tool_call_id: m.tool_call_id || '',
+      };
+    }
+    if (m.role === 'assistant') {
+      const msg: any = {
+        role: 'assistant' as const,
+        content: typeof m.content === 'string' ? m.content : '',
+      };
+      if (m.tool_calls && m.tool_calls.length > 0) {
+        msg.tool_calls = m.tool_calls;
+      }
+      return msg;
+    }
+    if (m.role === 'system') {
+      return {
+        role: 'system' as const,
+        content: typeof m.content === 'string' ? m.content : '',
+      };
+    }
+    return {
+      role: 'user' as const,
+      content: Array.isArray(m.content) ? m.content : (m.content || ''),
+    };
+  });
+}
+
+// ============================================================
+// Streaming chat
+// ============================================================
+
+export interface StreamChatConfig {
+  abortSignal?: AbortSignal;
+  retryConfig?: RetryConfig;
+  tools?: ChatCompletionTool[];
+  toolExecutor?: (toolCall: ToolCall) => Promise<ToolResult>;
+  maxToolIterations?: number;
+}
+
+function isVisionSupported(provider: AIProvider): boolean {
+  return provider.visionModels?.includes(provider.selectedModel) ?? false;
+}
+
+/**
+ * Main streaming chat function.
+ * Yields StreamEvent objects as the AI generates a response.
+ * Supports tool calling with ReAct loop pattern.
+ */
+export async function* streamChat(
+  provider: AIProvider,
+  messages: ChatMessage[],
+  config?: StreamChatConfig,
+): AsyncGenerator<StreamEvent, void, unknown> {
+  const retryConfig = config?.retryConfig ?? DEFAULT_RETRY_CONFIG;
+  const abortSignal = config?.abortSignal;
+  const allowImages = isVisionSupported(provider);
+  const tools = config?.tools;
+  const toolExecutor = config?.toolExecutor;
+  const maxToolIterations = config?.maxToolIterations ?? 10;
+
+  const ensureNotAborted = () => {
+    if (abortSignal?.aborted) {
+      throw new ApiError('Aborted by user', 'USER_ABORTED', false);
+    }
+  };
+
+  // Only support OpenAI-compatible providers in Phase 1
+  if (!isOpenAICompatible(provider.type)) {
+    // For Anthropic/Gemini, fall back to OpenAI-compatible endpoint if configured
+    // Full native support will come in later phases
+  }
+
+  const adapterConfig = getAdapterConfig(provider);
+  const client = new OpenAI({
+    apiKey: provider.apiKey,
+    baseURL: adapterConfig.baseURL,
+    defaultHeaders: adapterConfig.headers,
+    dangerouslyAllowBrowser: true,
+    maxRetries: 0,
+  });
+
+  const systemPrompt = buildSystemPrompt(!!(tools && tools.length > 0));
+
+  const apiMessages: ApiMessage[] = [
+    { role: 'system', content: systemPrompt },
+    ...messages.map((m) => ({
+      role: m.role as 'user' | 'assistant',
+      content: m.role === 'user' ? buildUserMessageContent(m, allowImages) : m.content,
+    })),
+  ];
+
+  lastApiMessages = [...apiMessages];
+
+  // ReAct loop: continue until no more tool calls or max iterations reached
+  for (let iteration = 0; iteration <= maxToolIterations; iteration++) {
+    ensureNotAborted();
+
+    // Streaming with retry loop
+    let stream: AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk> | null = null;
+
+    for (let attempt = 0; attempt <= retryConfig.maxRetries; attempt++) {
+      ensureNotAborted();
+      const { controller, clear } = createTimeoutController(retryConfig.timeout, abortSignal);
+
+      try {
+        const createParams: any = {
+          model: provider.selectedModel,
+          messages: convertToOpenAIMessages(apiMessages),
+          stream: true,
+        };
+        if (tools && tools.length > 0) {
+          createParams.tools = tools;
+        }
+
+        stream = await client.chat.completions.create(createParams as OpenAI.ChatCompletionCreateParamsStreaming, {
+          signal: controller.signal,
+        });
+        clear();
+        break;
+      } catch (error) {
+        clear();
+        if (abortSignal?.aborted) {
+          throw new ApiError('Aborted by user', 'USER_ABORTED', false, error);
+        }
+
+        const apiError = parseError(error);
+        if (!apiError.retryable || attempt >= retryConfig.maxRetries) {
+          throw apiError;
+        }
+
+        const retryDelay = getRetryDelay(attempt, retryConfig);
+        yield { type: 'thinking', message: `Retrying in ${Math.round(retryDelay / 1000)}s (${attempt + 1}/${retryConfig.maxRetries})...` };
+        await delay(retryDelay);
+        ensureNotAborted();
+      }
+    }
+
+    if (!stream) {
+      throw new ApiError('Failed to create stream', 'UNKNOWN', false);
+    }
+
+    // Process stream
+    let fullContent = '';
+    let fullReasoning = '';
+    const toolCallsMap = new Map<number, { id: string; name: string; arguments: string }>();
+
+    try {
+      for await (const chunk of stream) {
+        ensureNotAborted();
+        const delta = chunk.choices[0]?.delta;
+
+        // Handle reasoning/thinking content (DeepSeek reasoning_content)
+        const reasoningContent = (delta as any)?.reasoning_content;
+        if (reasoningContent) {
+          fullReasoning += reasoningContent;
+          yield { type: 'reasoning', content: reasoningContent };
+        }
+
+        // Handle text content
+        if (delta?.content) {
+          fullContent += delta.content;
+          yield { type: 'content', content: delta.content };
+        }
+
+        // Handle tool calls
+        if (delta?.tool_calls) {
+          for (const toolCallDelta of delta.tool_calls) {
+            const idx = toolCallDelta.index;
+            if (!toolCallsMap.has(idx)) {
+              toolCallsMap.set(idx, {
+                id: toolCallDelta.id || '',
+                name: toolCallDelta.function?.name || '',
+                arguments: '',
+              });
+            }
+            const existing = toolCallsMap.get(idx)!;
+            if (toolCallDelta.id) existing.id = toolCallDelta.id;
+            if (toolCallDelta.function?.name) existing.name = toolCallDelta.function.name;
+            if (toolCallDelta.function?.arguments) existing.arguments += toolCallDelta.function.arguments;
+          }
+        }
+      }
+    } catch (streamError) {
+      if (abortSignal?.aborted) {
+        throw new ApiError('Aborted by user', 'USER_ABORTED', false, streamError);
+      }
+      throw parseError(streamError);
+    }
+
+    // Collect tool calls in order
+    const toolCalls = Array.from(toolCallsMap.entries())
+      .sort(([a], [b]) => a - b)
+      .map(([, tc]) => tc);
+
+    // Update API messages with assistant response
+    const assistantMessage: ApiMessage = {
+      role: 'assistant',
+      content: fullContent || null,
+      reasoning: fullReasoning || null,
+    };
+    if (toolCalls.length > 0) {
+      assistantMessage.tool_calls = toolCalls.map((tc) => ({
+        id: tc.id,
+        type: 'function' as const,
+        function: { name: tc.name, arguments: tc.arguments },
+      }));
+    }
+    apiMessages.push(assistantMessage);
+
+    // If no tool calls or no executor, we're done
+    if (toolCalls.length === 0 || !toolExecutor) {
+      lastApiMessages = [...apiMessages];
+      yield { type: 'done' };
+      return;
+    }
+
+    // Execute tool calls
+    for (const tc of toolCalls) {
+      ensureNotAborted();
+
+      let parsedArgs: Record<string, unknown>;
+      try {
+        parsedArgs = JSON.parse(tc.arguments);
+      } catch {
+        parsedArgs = {};
+      }
+
+      const toolCall: ToolCall = {
+        id: tc.id,
+        name: tc.name,
+        arguments: parsedArgs,
+      };
+
+      // Yield tool_call event so UI can show "Navigating to..." etc.
+      yield { type: 'tool_call', toolCall };
+
+      // Execute the tool
+      const toolResult = await toolExecutor(toolCall);
+
+      // Yield tool_result event
+      yield { type: 'tool_result', content: toolResult.result, toolCall };
+
+      // Add tool result to messages
+      apiMessages.push({
+        role: 'tool',
+        content: toolResult.result,
+        tool_call_id: tc.id,
+        name: tc.name,
+      });
+    }
+
+    // Continue the loop - the AI will see the tool results and respond
+  }
+
+  // Max iterations reached
+  lastApiMessages = [...apiMessages];
+  yield { type: 'done' };
+}
+
+/**
+ * Build the system prompt with optional tool instructions.
+ */
+function buildSystemPrompt(hasTools: boolean): string {
+  let prompt = `You are a helpful AI assistant. Always respond using Markdown format for better readability. Use:
+- Headers (##, ###) for sections
+- **bold** and *italic* for emphasis
+- \`code\` for inline code and \`\`\` for code blocks with language specification
+- Lists (- or 1.) for enumerations
+- > for quotes
+- Tables when presenting structured data`;
+
+  if (hasTools) {
+    prompt += `
+
+When you need to interact with the browser or extract web content, use the provided tools. Here are guidelines:
+
+1. First use browser_take_snapshot to understand the page structure before interacting
+2. Use the UIDs from the snapshot to click, fill, or hover on elements
+3. After navigation or interaction, take a new snapshot to see the updated page
+4. Use extract_page_content to get the main text content of a page
+5. Use extract_youtube_transcript to get video captions from YouTube pages
+6. Always take a fresh snapshot if the page has changed (after navigation, clicks, etc.)
+7. Be careful with sensitive actions like filling forms - confirm with the user if needed
+8. Report what you see and what actions you're taking clearly`;
+  }
+
+  return prompt;
+}
+
+/**
+ * Fetch available models from a provider.
+ */
+export async function fetchModels(
+  baseUrl: string,
+  apiKey: string,
+): Promise<{ id: string; name?: string }[]> {
+  try {
+    function resolveBaseUrl(url: string): string {
+      const trimmed = url.trim();
+      if (!trimmed) return trimmed;
+      if (trimmed.endsWith('/')) return trimmed;
+      if (/\/v1$/i.test(trimmed)) return trimmed;
+      return `${trimmed}/v1`;
+    }
+
+    const client = new OpenAI({
+      apiKey,
+      baseURL: resolveBaseUrl(baseUrl),
+      dangerouslyAllowBrowser: true,
+    });
+
+    const response = await client.models.list();
+    return response.data.map((m) => ({ id: m.id, name: m.id }));
+  } catch (error) {
+    console.error('Error fetching models:', error);
+    return [];
+  }
+}

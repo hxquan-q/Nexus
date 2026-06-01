@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sandbox</title>
+  <style>
+    body {
+      margin: 0;
+      padding: var(--spacing-sm, 8px);
+      font-family: var(--font-body, system-ui, sans-serif);
+      background: transparent;
+    }
+    .chart-error {
+      color: #ff3b30;
+      font-size: 13px;
+      padding: 8px;
+      border: 1px solid #ff3b30;
+      border-radius: 8px;
+      background: rgba(255, 59, 48, 0.08);
+    }
+  </style>
+</head>
+<body>
+<script type="module">
+  // Mermaid rendering
+  async function renderMermaid(code) {
+    const mermaid = await import('mermaid');
+    mermaid.default.initialize({
+      startOnLoad: false,
+      theme: 'default',
+      securityLevel: 'loose',
+    });
+    const id = 'mermaid-' + Date.now();
+    const { svg } = await mermaid.default.render(id, code);
+    return svg;
+  }
+
+  // Graphviz rendering
+  async function renderGraphviz(code) {
+    const { instance } = await import('@viz-js/viz');
+    const viz = await instance();
+    const result = viz.renderSVGElement(code);
+    return result.outerHTML;
+  }
+
+  window.addEventListener('message', async (e) => {
+    const data = e.data;
+    if (!data || !data.type) return;
+
+    try {
+      if (data.type === 'render-mermaid') {
+        const svg = await renderMermaid(data.code);
+        window.parent.postMessage({
+          type: 'mermaid-result',
+          id: data.id,
+          svg,
+        }, '*');
+      } else if (data.type === 'render-graphviz') {
+        const svgHtml = await renderGraphviz(data.code);
+        window.parent.postMessage({
+          type: 'graphviz-result',
+          id: data.id,
+          svg: svgHtml,
+        }, '*');
+      }
+    } catch (err) {
+      window.parent.postMessage({
+        type: 'chart-error',
+        id: data.id,
+        error: err instanceof Error ? err.message : String(err),
+      }, '*');
+    }
+  });
+
+  // Signal ready
+  window.parent.postMessage({ type: 'sandbox-ready' }, '*');
+</script>
+</body>
+</html>
