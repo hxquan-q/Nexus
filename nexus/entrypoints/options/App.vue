@@ -791,44 +791,49 @@ async function clearAllData() {
 // ============================================================
 
 onMounted(async () => {
-  // Providers
-  providers.value = await getAllProviders();
-  activeProviderId.value = await getActiveProviderId();
+  try {
+    // Providers
+    providers.value = await getAllProviders();
+    activeProviderId.value = await getActiveProviderId();
 
-  // Theme & language
-  currentTheme.value = await getThemeMode();
-  applyTheme(currentTheme.value);
-  currentLanguage.value = await getLanguage();
+    // Theme & language
+    currentTheme.value = await getThemeMode();
+    applyTheme(currentTheme.value);
+    currentLanguage.value = await getLanguage();
 
-  // Appearance
-  fontScale.value = await getFontScale();
-  floatingBallEnabled.value = await getFloatingBallEnabled();
-  selectionQuoteEnabled.value = await getSelectionQuoteEnabled();
-  const { getSoundEffects, getShowReactions } = await import('../../utils/storage');
-  soundEffectsEnabled.value = await getSoundEffects();
-  showReactionsEnabled.value = await getShowReactions();
+    // Appearance
+    fontScale.value = await getFontScale();
+    floatingBallEnabled.value = await getFloatingBallEnabled();
+    selectionQuoteEnabled.value = await getSelectionQuoteEnabled();
+    const { getSoundEffects, getShowReactions } = await import('../../utils/storage');
+    soundEffectsEnabled.value = await getSoundEffects();
+    showReactionsEnabled.value = await getShowReactions();
 
-  // AI settings
-  pageContentMaxLength.value = await getPageContentMaxLength();
-  maxToolCallsPerTurn.value = await getMaxToolCallsPerTurn();
-  rawExtractionSites.value = await getRawExtractionSites();
-  systemPromptText.value = await getSystemPrompt();
-  systemPromptSaved.value = systemPromptText.value;
+    // AI settings
+    pageContentMaxLength.value = await getPageContentMaxLength();
+    maxToolCallsPerTurn.value = await getMaxToolCallsPerTurn();
+    rawExtractionSites.value = await getRawExtractionSites();
+    systemPromptText.value = await getSystemPrompt();
+    systemPromptSaved.value = systemPromptText.value;
 
-  // MCP
-  mcpServers.value = await getMcpServers();
-  watchMcpServers((servers) => {
-    mcpServers.value = servers;
-  });
+    // MCP
+    mcpServers.value = await getMcpServers();
+    watchMcpServers((servers) => {
+      mcpServers.value = servers;
+    });
 
-  // Skills
-  await refreshSkills();
+    // Skills
+    await refreshSkills();
 
-  // Shortcuts
-  shortcuts.value = await getShortcuts();
+    // Shortcuts
+    shortcuts.value = await getShortcuts();
 
-  // Presets
-  presets.value = await getPresetActions();
+    // Presets
+    presets.value = await getPresetActions();
+  } catch (error) {
+    console.error('[Nexus] Options page initialization failed:', error);
+    showSaveToast('Failed to load settings. Please reload the page.');
+  }
 });
 </script>
 

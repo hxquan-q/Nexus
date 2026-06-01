@@ -44,6 +44,9 @@
     return result.outerHTML;
   }
 
+  // Target origin for postMessage - use wildcard since sandbox has opaque origin
+  const TARGET_ORIGIN = '*';
+
   window.addEventListener('message', async (e) => {
     const data = e.data;
     if (!data || !data.type) return;
@@ -55,26 +58,32 @@
           type: 'mermaid-result',
           id: data.id,
           svg,
-        }, '*');
+        }, TARGET_ORIGIN);
       } else if (data.type === 'render-graphviz') {
         const svgHtml = await renderGraphviz(data.code);
         window.parent.postMessage({
           type: 'graphviz-result',
           id: data.id,
           svg: svgHtml,
-        }, '*');
+        }, TARGET_ORIGIN);
       }
     } catch (err) {
       window.parent.postMessage({
         type: 'chart-error',
         id: data.id,
         error: err instanceof Error ? err.message : String(err),
-      }, '*');
+      }, TARGET_ORIGIN);
     }
   });
 
-  // Signal ready
-  window.parent.postMessage({ type: 'sandbox-ready' }, '*');
+  // Signal ready - delayed slightly to ensure parent has set up listeners
+  setTimeout(() => {
+    try {
+      window.parent.postMessage({ type: 'sandbox-ready' }, TARGET_ORIGIN);
+    } catch (e) {
+      console.error('[Nexus Sandbox] Failed to signal ready:', e);
+    }
+  }, 0);
 </script>
 </body>
 </html>

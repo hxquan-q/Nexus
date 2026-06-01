@@ -628,15 +628,26 @@ async function processSelectionAction(
 
 /**
  * Helper to handle async message responses.
+ * Wraps each handler in try/catch to prevent one bad handler from crashing the SW.
  */
 function handleAsyncMessage(
   handler: () => Promise<any>,
   sendResponse: (response: any) => void,
 ): void {
   handler()
-    .then((result) => sendResponse(result))
+    .then((result) => {
+      try {
+        sendResponse(result);
+      } catch (e) {
+        console.error('[Nexus] Failed to send response:', e);
+      }
+    })
     .catch((error) => {
       console.error('[Nexus] Message handler error:', error);
-      sendResponse({ error: error.message || 'Unknown error' });
+      try {
+        sendResponse({ error: error?.message || 'Unknown error' });
+      } catch (e) {
+        console.error('[Nexus] Failed to send error response:', e);
+      }
     });
 }

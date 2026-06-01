@@ -44,8 +44,9 @@ import { t, type Language } from '../../utils/i18n';
 // ============================================================
 
 if ((window as any).__nexusContentScriptLoaded) {
-  // Already injected (e.g., extension was reloaded). Skip re-initialization.
-  console.log('[Nexus] Content script already loaded, skipping duplicate initialization');
+  // Already injected (e.g., extension was reloaded). The main() guard
+  // below will prevent re-initialization. This flag is informational.
+  console.log('[Nexus] Content script already loaded on this page');
 }
 (window as any).__nexusContentScriptLoaded = true;
 
@@ -125,69 +126,74 @@ export default defineContentScript({
       return;
     }
 
-    // Load language setting
-    chrome.storage.local.get(['language'], (result: { language?: string }) => {
-      currentLang = (result?.language === 'zh-CN' ? 'zh-CN' : 'en') as Language;
-      setToolbarLanguage(currentLang);
-      setPopupLanguage(currentLang);
-    });
-
-    // Watch for language changes
-    chrome.storage.onChanged.addListener((changes: Record<string, { newValue?: any; oldValue?: any }>, area: string) => {
-      if (area === 'local' && changes.language) {
-        currentLang = (changes.language.newValue === 'zh-CN' ? 'zh-CN' : 'en') as Language;
+    try {
+      // Load language setting
+      chrome.storage.local.get(['language'], (result: { language?: string }) => {
+        currentLang = (result?.language === 'zh-CN' ? 'zh-CN' : 'en') as Language;
         setToolbarLanguage(currentLang);
         setPopupLanguage(currentLang);
-      }
-    });
+      });
 
-    // Initialize selection toolbar
-    initSelectionToolbar(handleSelectionAction, currentLang);
+      // Watch for language changes
+      chrome.storage.onChanged.addListener((changes: Record<string, { newValue?: any; oldValue?: any }>, area: string) => {
+        if (area === 'local' && changes.language) {
+          currentLang = (changes.language.newValue === 'zh-CN' ? 'zh-CN' : 'en') as Language;
+          setToolbarLanguage(currentLang);
+          setPopupLanguage(currentLang);
+        }
+      });
 
-    // Initialize selection observer
-    selectionObserver = new SelectionObserver({
-      onSelection: handleSelection,
-      onClear: handleSelectionClear,
-      onClick: handleClick,
-    });
+      // Initialize selection toolbar
+      initSelectionToolbar(handleSelectionAction, currentLang);
 
-    // Initialize keyboard shortcuts
-    initShortcuts({
-      onOpenPanel: () => {
-        // Handled by sending OPEN_SIDE_PANEL message in shortcuts.ts
-      },
-      onQuickAsk: handleQuickAsk,
-      onAreaScreenshot: handleAreaScreenshot,
-      onFullScreenshot: handleFullScreenshot,
-      onOcrCapture: handleOcrCapture,
-      onBrowserControl: () => {
-        // Handled by sending TOGGLE_SIDE_PANEL_CONTROL message
-      },
-    });
+      // Initialize selection observer
+      selectionObserver = new SelectionObserver({
+        onSelection: handleSelection,
+        onClear: handleSelectionClear,
+        onClick: handleClick,
+      });
 
-    // Initialize floating ball
-    initFloatingBall();
+      // Initialize keyboard shortcuts
+      initShortcuts({
+        onOpenPanel: () => {
+          // Handled by sending OPEN_SIDE_PANEL message in shortcuts.ts
+        },
+        onQuickAsk: handleQuickAsk,
+        onAreaScreenshot: handleAreaScreenshot,
+        onFullScreenshot: handleFullScreenshot,
+        onOcrCapture: handleOcrCapture,
+        onBrowserControl: () => {
+          // Handled by sending TOGGLE_SIDE_PANEL_CONTROL message
+        },
+      });
 
-    // Listen for messages from background/sidepanel
-    chrome.runtime.onMessage.addListener((message: any, _sender: any, sendResponse: (response?: any) => void) => {
-      if (!message?.type) return false;
+      // Initialize floating ball
+      initFloatingBall();
 
-      switch (message.type) {
-        case 'QUICK_ASK_RESULT':
-          handleQuickAskResult(message);
-          sendResponse({ received: true });
-          return false;
+      // Listen for messages from background/sidepanel
+      chrome.runtime.onMessage.addListener((message: any, _sender: any, sendResponse: (response?: any) => void) => {
+        if (!message?.type) return false;
 
-        case 'CAPTURE_AREA_INIT':
-          handleCaptureAreaInit(message);
-          return false;
+        switch (message.type) {
+          case 'QUICK_ASK_RESULT':
+            handleQuickAskResult(message);
+            sendResponse({ received: true });
+            return false;
 
-        default:
-          return false;
-      }
-    });
+          case 'CAPTURE_AREA_INIT':
+            handleCaptureAreaInit(message);
+            return false;
 
-    console.log('[Nexus] Content script initialized');
+          default:
+            return false;
+        }
+      });
+
+      console.log('[Nexus] Content script initialized');
+    } catch (error) {
+      console.error('[Nexus] Content script initialization failed:', error);
+      // Don't crash the host page - just log and continue
+    }
   },
 });
 

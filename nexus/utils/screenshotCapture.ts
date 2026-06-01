@@ -52,12 +52,15 @@ export async function cropScreenshotArea(
   ctx.drawImage(image, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
 
   const blob = await canvas.convertToBlob({ type: 'image/png' });
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = () => reject(new Error('Failed to convert blob to data URL'));
-    reader.readAsDataURL(blob);
-  });
+  // Use a simple byte-to-base64 approach that works in service workers
+  // (FileReader is not available in service workers)
+  const arrayBuffer = await blob.arrayBuffer();
+  const bytes = new Uint8Array(arrayBuffer);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return 'data:image/png;base64,' + btoa(binary);
 }
 
 function loadImage(dataUrl: string): Promise<ImageBitmap> {

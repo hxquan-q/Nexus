@@ -392,8 +392,10 @@ export function initChartRendering(container: HTMLElement): void {
 
     window.addEventListener('message', messageHandler);
 
-    // Insert iframe (hidden helper for communication)
-    iframe.style.display = 'none';
+    // Insert iframe - must be visible (even if tiny) for scripts to execute
+    // Using 1x1 pixel size with overflow hidden so it doesn't affect layout
+    iframe.style.cssText = 'width:1px;height:1px;border:none;position:absolute;pointer-events:none;overflow:hidden;';
+    chartEl.style.position = 'relative';
     chartEl.appendChild(iframe);
   }
 }

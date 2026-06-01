@@ -1880,106 +1880,111 @@ async function startTemplate(template: ChatTemplate) {
 // ============================================================
 
 onMounted(async () => {
-  providers.value = await getAllProviders();
-  const active = await getActiveProvider();
-  activeProviderId.value = active?.id || null;
+  try {
+    providers.value = await getAllProviders();
+    const active = await getActiveProvider();
+    activeProviderId.value = active?.id || null;
 
-  // Check if onboarding should be shown
-  const onboardingDone = await getOnboardingCompleted();
-  if (!onboardingDone && providers.value.length === 0) {
-    showOnboarding.value = true;
-  }
+    // Check if onboarding should be shown
+    const onboardingDone = await getOnboardingCompleted();
+    if (!onboardingDone && providers.value.length === 0) {
+      showOnboarding.value = true;
+    }
 
-  currentThemeMode.value = await getThemeMode();
-  applyTheme(currentThemeMode.value);
+    currentThemeMode.value = await getThemeMode();
+    applyTheme(currentThemeMode.value);
 
-  currentLanguage.value = await getLanguage();
+    currentLanguage.value = await getLanguage();
 
-  selectionQuoteEnabled.value = await getSelectionQuoteEnabled();
+    selectionQuoteEnabled.value = await getSelectionQuoteEnabled();
 
-  systemThemeMediaQuery.value = window.matchMedia('(prefers-color-scheme: dark)');
-  systemThemeMediaQuery.value.addEventListener('change', handleSystemThemeChange);
+    systemThemeMediaQuery.value = window.matchMedia('(prefers-color-scheme: dark)');
+    systemThemeMediaQuery.value.addEventListener('change', handleSystemThemeChange);
 
-  unwatchProviders.value = watchProviders((newProviders) => {
-    providers.value = newProviders;
-  });
+    unwatchProviders.value = watchProviders((newProviders) => {
+      providers.value = newProviders;
+    });
 
-  unwatchActiveProviderId.value = watchActiveProviderId((newId) => {
-    activeProviderId.value = newId;
-  });
+    unwatchActiveProviderId.value = watchActiveProviderId((newId) => {
+      activeProviderId.value = newId;
+    });
 
-  unwatchLanguage.value = watchLanguage((newLang) => {
-    currentLanguage.value = newLang;
-  });
+    unwatchLanguage.value = watchLanguage((newLang) => {
+      currentLanguage.value = newLang;
+    });
 
-  unwatchThemeMode.value = watchThemeMode((newMode) => {
-    currentThemeMode.value = newMode;
-    applyTheme(newMode);
-  });
+    unwatchThemeMode.value = watchThemeMode((newMode) => {
+      currentThemeMode.value = newMode;
+      applyTheme(newMode);
+    });
 
-  unwatchSelectionQuoteEnabled.value = watchSelectionQuoteEnabled((enabled) => {
-    selectionQuoteEnabled.value = enabled;
-    if (!enabled) hideSelectionQuotePopup();
-  });
+    unwatchSelectionQuoteEnabled.value = watchSelectionQuoteEnabled((enabled) => {
+      selectionQuoteEnabled.value = enabled;
+      if (!enabled) hideSelectionQuotePopup();
+    });
 
-  markdownActionClickHandler = (event: MouseEvent) => {
-    void handleMarkdownActionClick(event);
-  };
-  globalKeydownHandler = (event: KeyboardEvent) => {
-    handleGlobalKeydown(event);
-  };
-  document.addEventListener('click', markdownActionClickHandler);
-  document.addEventListener('keydown', globalKeydownHandler);
-  document.addEventListener('mouseup', handleSidepanelSelectionMouseup);
-  document.addEventListener('mousedown', handleSidepanelSelectionMousedown);
-  if (chatAreaRef.value) {
-    chatAreaRef.value.addEventListener('scroll', checkUserScroll, { passive: true });
-  }
+    markdownActionClickHandler = (event: MouseEvent) => {
+      void handleMarkdownActionClick(event);
+    };
+    globalKeydownHandler = (event: KeyboardEvent) => {
+      handleGlobalKeydown(event);
+    };
+    document.addEventListener('click', markdownActionClickHandler);
+    document.addEventListener('keydown', globalKeydownHandler);
+    document.addEventListener('mouseup', handleSidepanelSelectionMouseup);
+    document.addEventListener('mousedown', handleSidepanelSelectionMousedown);
+    if (chatAreaRef.value) {
+      chatAreaRef.value.addEventListener('scroll', checkUserScroll, { passive: true });
+    }
 
-  contentMessageHandler = (message: any) => {
-    handleContentMessage(message);
-  };
-  browser.runtime.onMessage.addListener(contentMessageHandler);
+    contentMessageHandler = (message: any) => {
+      handleContentMessage(message);
+    };
+    browser.runtime.onMessage.addListener(contentMessageHandler);
 
-  await connectEnabledMcpServers();
-
-  unwatchMcpServers.value = watchMcpServers(async () => {
     await connectEnabledMcpServers();
-  });
 
-  loadedSkills.value = await getAllSkills();
+    unwatchMcpServers.value = watchMcpServers(async () => {
+      await connectEnabledMcpServers();
+    });
 
-  setScriptConfirmCallback(handleScriptConfirmation);
+    loadedSkills.value = await getAllSkills();
 
-  // Load templates
-  chatTemplates.value = await getAllTemplates();
+    setScriptConfirmCallback(handleScriptConfirmation);
 
-  // Load preset actions
-  presetActions.value = await getPresetActions();
+    // Load templates
+    chatTemplates.value = await getAllTemplates();
 
-  // Load sound effects setting
-  soundEffectsEnabled.value = await getSoundEffects();
+    // Load preset actions
+    presetActions.value = await getPresetActions();
 
-  unwatchSoundEffects.value = watchSoundEffects((enabled) => {
-    soundEffectsEnabled.value = enabled;
-  });
+    // Load sound effects setting
+    soundEffectsEnabled.value = await getSoundEffects();
 
-  // Load reactions display setting
-  showReactionsEnabled.value = await getShowReactions();
+    unwatchSoundEffects.value = watchSoundEffects((enabled) => {
+      soundEffectsEnabled.value = enabled;
+    });
 
-  unwatchShowReactions.value = watchShowReactions((enabled) => {
-    showReactionsEnabled.value = enabled;
-  });
+    // Load reactions display setting
+    showReactionsEnabled.value = await getShowReactions();
 
-  // Network status monitoring
-  const handleOnline = () => { isOffline.value = false; };
-  const handleOffline = () => { isOffline.value = true; };
-  window.addEventListener('online', handleOnline);
-  window.addEventListener('offline', handleOffline);
+    unwatchShowReactions.value = watchShowReactions((enabled) => {
+      showReactionsEnabled.value = enabled;
+    });
 
-  // Store refs for cleanup
-  (window as any).__nexusOnlineHandler = handleOnline;
-  (window as any).__nexusOfflineHandler = handleOffline;
+    // Network status monitoring
+    const handleOnline = () => { isOffline.value = false; };
+    const handleOffline = () => { isOffline.value = true; };
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    // Store refs for cleanup
+    (window as any).__nexusOnlineHandler = handleOnline;
+    (window as any).__nexusOfflineHandler = handleOffline;
+  } catch (error) {
+    console.error('[Nexus] Sidepanel initialization failed:', error);
+    showToast('Failed to initialize. Please reload the panel.', 5000);
+  }
 });
 
 onUnmounted(() => {
