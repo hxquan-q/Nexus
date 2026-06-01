@@ -1,0 +1,22 @@
+{
+    "entry": [
+        "background/index.js",
+        "sidepanel/index.html",
+        "sidepanel/index.js",
+        "sidepanel/preload.js",
+        "sandbox/index.html",
+        "sandbox/index.js",
+        "settings/index.html",
+        "settings/index.js",
+        "content/**/*.js",
+        "shared/ui/**/*.js",
+        "shared/dom/**/*.js",
+        "shared/media/**/*.js",
+        "scripts/*.mjs",
+        "scripts/*.test.js"
+    ],
+    "project": ["**/*.{js,mjs,ts}"],
+    "ignore": [],
+    "ignoreExportsUsedInFile": true,
+    "ignoreDependencies": []
+}

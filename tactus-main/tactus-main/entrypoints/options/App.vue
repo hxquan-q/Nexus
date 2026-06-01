@@ -1,0 +1,1739 @@
+<script setup lang="ts">
+import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue';
+import {
+  getAllProviders,
+  getActiveProvider,
+  setActiveProviderId,
+  saveProvider,
+  deleteProvider,
+  getTrustedScripts,
+  untrustScript,
+  getLanguage,
+  setLanguage,
+  getFloatingBallEnabled,
+  setFloatingBallEnabled,
+  getSelectionQuoteEnabled,
+  setSelectionQuoteEnabled,
+  getMaxPageContentLength,
+  setMaxPageContentLength,
+  getMaxToolCalls,
+  setMaxToolCalls,
+  getRawExtractSites,
+  addRawExtractSite,
+  removeRawExtractSite,
+  getThemeMode,
+  watchThemeMode,
+  applyTheme,
+  getUiFontScale,
+  setUiFontScale,
+  watchUiFontScale,
+  applyUiFontScale,
+  normalizeUiFontScaleValue,
+  UI_FONT_SCALE_DEFAULT,
+  UI_FONT_SCALE_MIN,
+  UI_FONT_SCALE_MAX,
+  UI_FONT_SCALE_STEP,
+  getPresetActions,
+  addPresetAction,
+  updatePresetAction,
+  deletePresetAction,
+  watchPresetActions,
+  type AIProvider,
+  type TrustedScript,
+  type Language,
+  type PresetAction,
+  type ProviderType,
+  type UiFontScale,
+} from '../../utils/storage';
+import {
+  getAllSkills,
+  deleteSkill,
+  type Skill,
+} from '../../utils/db';
+import { fetchModels } from '../../utils/api';
+import { importSkillFromFolder } from '../../utils/skillsImporter';
+import { t, type Translations } from '../../utils/i18n';
+import {
+  getAllMcpServers,
+  saveMcpServer,
+  deleteMcpServer,
+  toggleMcpServer,
+  generateMcpServerId,
+  watchMcpServers,
+  type McpServerConfig,
+  type McpAuthType,
+} from '../../utils/mcpStorage';
+import { mcpManager } from '../../utils/mcp';
+import {
+  exportAllData,
+  downloadExportData,
+  readImportFile,
+  importAllData,
+  type ImportResult,
+} from '../../utils/dataTransfer';
+
+const activeNav = ref<'models' | 'skills' | 'mcp' | 'settings'>('models');
+
+// 语言设置
+const currentLanguage = ref<Language>('en');
+const uiFontScale = ref<UiFontScale>(UI_FONT_SCALE_DEFAULT);
+const uiFontScaleInput = ref(String(UI_FONT_SCALE_DEFAULT));
+const unwatchUiFontScale = ref<(() => void) | null>(null);
+
+// 悬浮球设置
+const isFirefox = import.meta.env.FIREFOX;
+const floatingBallEnabled = ref(true);
+
+// 划词引用设置
+const selectionQuoteEnabled = ref(true);
+
+// 网页内容字数上限
+const maxPageContentLength = ref(30000);
+
+// 工具调用最大次数
+const maxToolCalls = ref(100);
+
+// 原始提取网站设置
+const rawExtractSites = ref<string[]>([]);
+const newRawExtractSite = ref('');
+
+// 预设操作设置
+const presetActions = ref<PresetAction[]>([]);
+const selectedPresetId = ref<string | null>(null);
+const presetFormName = ref('');
+const presetFormContent = ref('');
+const showPresetModal = ref(false);
+const isEditingPreset = ref(false);
+const unwatchPresetActions = ref<(() => void) | null>(null);
+
+// 数据导入/导出
+const isExporting = ref(false);
+const isImportingData = ref(false);
+const showImportConfirmModal = ref(false);
+const pendingImportFile = ref<File | null>(null);
+
+// 主题监听
+const unwatchThemeMode = ref<(() => void) | null>(null);
+const systemThemeMediaQuery = ref<MediaQueryList | null>(null);
+
+// 国际化辅助函数
+const i18n = (key: keyof Translations, params?: Record<string, string | number>) => {
+  return t(currentLanguage.value, key, params);
+};
+
+// 模型配置
+const providers = ref<AIProvider[]>([]);
+const activeProviderId = ref<string | null>(null);
+const selectedProviderId = ref<string | null>(null);
+const availableModels = ref<string[]>([]);
+const isFetchingModels = ref(false);
+const isSaving = ref(false);
+const autoSaveMessage = ref('');
+let autoSaveTimer: ReturnType<typeof setTimeout> | null = null;
+let autoSaveDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+let skipAutoSave = false;
+
+const formName = ref('');
+const formBaseUrl = ref('');
+const formApiKey = ref('');
+const formModels = ref<string[]>([]);
+const formCustomModel = ref('');
+const formVisionModelSupport = ref<Record<string, boolean>>({});
+const formProviderType = ref<ProviderType>('openai');
+
+const isNewProvider = computed(() => selectedProviderId.value === 'new');
+
+const apiEndpointPreview = computed(() => {
+  const base = formBaseUrl.value;
+  // Only show preview when user has entered a base URL
+  if (!base) return '';
+
+  const endsWithSlash = base.endsWith('/');
+  const cleanBase = base.replace(/\/+$/, '');
+
+  if (formProviderType.value === 'gemini') {
+    return endsWithSlash
+      ? cleanBase + '/models'
+      : cleanBase + '/v1beta/models';
+  }
+  if (formProviderType.value === 'anthropic') {
+    return endsWithSlash
+      ? cleanBase + '/messages'
+      : cleanBase + '/v1/messages';
+  }
+  // OpenAI
+  return endsWithSlash
+    ? cleanBase + '/chat/completions'
+    : cleanBase + '/v1/chat/completions';
+});
+
+function getDefaultBaseUrl(): string {
+  if (formProviderType.value === 'gemini') return 'https://generativelanguage.googleapis.com';
+  if (formProviderType.value === 'anthropic') return 'https://api.anthropic.com';
+  return '';
+}
+
+function getDefaultProviderName(): string {
+  if (formProviderType.value === 'gemini') return 'Gemini';
+  if (formProviderType.value === 'anthropic') return 'Anthropic';
+  return '';
+}
+
+const providerNameDynPlaceholder = computed(() => {
+  if (formProviderType.value === 'gemini') return 'Gemini';
+  if (formProviderType.value === 'anthropic') return 'Anthropic';
+  return i18n('providerNamePlaceholder');
+});
+
+const baseUrlDynPlaceholder = computed(() => {
+  if (formProviderType.value === 'gemini') return 'https://generativelanguage.googleapis.com';
+  if (formProviderType.value === 'anthropic') return 'https://api.anthropic.com';
+  return i18n('baseUrlPlaceholder');
+});
+
+// Skills 管理
+const skills = ref<Skill[]>([]);
+const trustedScripts = ref<TrustedScript[]>([]);
+const selectedSkillId = ref<string | null>(null);
+const isImporting = ref(false);
+const importError = ref<string | null>(null);
+const importWarnings = ref<string[]>([]);
+const showImportModal = ref(false);
+
+const selectedSkill = computed(() => skills.value.find(s => s.id === selectedSkillId.value) || null);
+const skillTrustedScripts = computed(() => {
+  if (!selectedSkill.value) return [];
+  return trustedScripts.value.filter(t => t.skillId === selectedSkill.value!.id);
+});
+
+// MCP Server 管理
+const mcpServers = ref<McpServerConfig[]>([]);
+const selectedMcpServerId = ref<string | null>(null);
+const mcpFormName = ref('');
+const mcpFormUrl = ref('');
+const mcpFormDescription = ref('');
+const mcpFormAuthType = ref<McpAuthType>('none');
+const mcpFormAuthToken = ref('');
+const mcpFormEnabled = ref(true);
+const isMcpSaving = ref(false);
+const isMcpTesting = ref(false);
+const mcpTestResult = ref<{ success: boolean; message: string; toolCount?: number } | null>(null);
+const unwatchMcpServers = ref<(() => void) | null>(null);
+let mcpAutoSaveDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+let skipMcpAutoSave = false;
+
+const isNewMcpServer = computed(() => selectedMcpServerId.value === 'new');
+const selectedMcpServer = computed(() => mcpServers.value.find(s => s.id === selectedMcpServerId.value) || null);
+
+// 加载所有数据（用于初始化和导入后刷新）
+async function loadAllData() {
+  providers.value = await getAllProviders();
+  const active = await getActiveProvider();
+  activeProviderId.value = active?.id || null;
+  if (providers.value.length > 0) {
+    selectProvider(activeProviderId.value || providers.value[0].id);
+  }
+  await loadSkills();
+  currentLanguage.value = await getLanguage();
+  uiFontScale.value = await getUiFontScale();
+  uiFontScaleInput.value = formatUiFontScale(uiFontScale.value);
+  floatingBallEnabled.value = await getFloatingBallEnabled();
+  selectionQuoteEnabled.value = await getSelectionQuoteEnabled();
+  maxPageContentLength.value = await getMaxPageContentLength();
+  maxToolCalls.value = await getMaxToolCalls();
+  rawExtractSites.value = await getRawExtractSites();
+  presetActions.value = await getPresetActions();
+  mcpServers.value = await getAllMcpServers();
+  const themeMode = await getThemeMode();
+  applyTheme(themeMode);
+  applyUiFontScale(uiFontScale.value);
+}
+
+onMounted(async () => {
+  await loadAllData();
+
+  // 监听预设操作变化
+  unwatchPresetActions.value = watchPresetActions((presets) => {
+    presetActions.value = presets;
+  });
+
+  // 监听系统主题变化
+  systemThemeMediaQuery.value = window.matchMedia('(prefers-color-scheme: dark)');
+  systemThemeMediaQuery.value.addEventListener('change', handleSystemThemeChange);
+
+  // 监听主题变化（跨页面同步）
+  unwatchThemeMode.value = watchThemeMode((newMode) => {
+    applyTheme(newMode);
+  });
+
+  // 监听字号变化（跨页面同步）
+  unwatchUiFontScale.value = watchUiFontScale((scale) => {
+    uiFontScale.value = scale;
+    uiFontScaleInput.value = formatUiFontScale(scale);
+    applyUiFontScale(scale);
+  });
+
+  // 监听 MCP Server 配置变化
+  unwatchMcpServers.value = watchMcpServers((servers) => {
+    mcpServers.value = servers;
+  });
+});
+
+// 系统主题变化处理
+async function handleSystemThemeChange() {
+  const themeMode = await getThemeMode();
+  if (themeMode === 'system') {
+    applyTheme('system');
+  }
+}
+
+onUnmounted(() => {
+  unwatchThemeMode.value?.();
+  unwatchUiFontScale.value?.();
+  unwatchMcpServers.value?.();
+  unwatchPresetActions.value?.();
+  systemThemeMediaQuery.value?.removeEventListener('change', handleSystemThemeChange);
+  if (autoSaveDebounceTimer) clearTimeout(autoSaveDebounceTimer);
+  if (autoSaveTimer) clearTimeout(autoSaveTimer);
+  if (mcpAutoSaveDebounceTimer) clearTimeout(mcpAutoSaveDebounceTimer);
+});
+
+// 自动保存模型配置（debounce 800ms）
+function debouncedAutoSave() {
+  if (autoSaveDebounceTimer) clearTimeout(autoSaveDebounceTimer);
+  autoSaveDebounceTimer = setTimeout(() => {
+    if (!selectedProviderId.value) return;
+    saveCurrentProvider(true);
+  }, 800);
+}
+
+watch(
+  [formName, formBaseUrl, formApiKey, formModels, formVisionModelSupport, formProviderType],
+  () => {
+    if (skipAutoSave) return;
+    if (!selectedProviderId.value) return;
+    if (isNewProvider.value) return;
+    debouncedAutoSave();
+  },
+  { deep: true },
+);
+
+async function loadSkills() {
+  skills.value = await getAllSkills();
+  trustedScripts.value = await getTrustedScripts();
+}
+
+function selectProvider(id: string) {
+  skipAutoSave = true;
+  selectedProviderId.value = id;
+  const provider = providers.value.find(p => p.id === id);
+  if (provider) {
+    formName.value = provider.name;
+    formBaseUrl.value = provider.baseUrl;
+    formApiKey.value = provider.apiKey;
+    formModels.value = Array.isArray(provider.models) ? [...provider.models] : [];
+    formVisionModelSupport.value = { ...(provider.visionModelSupport || {}) };
+    formCustomModel.value = '';
+    formProviderType.value = provider.providerType || 'openai';
+    availableModels.value = [];
+  }
+  nextTick(() => { skipAutoSave = false; });
+}
+
+function addNewProvider() {
+  skipAutoSave = true;
+  selectedProviderId.value = 'new';
+  formName.value = '';
+  formBaseUrl.value = '';
+  formApiKey.value = '';
+  formModels.value = [];
+  formVisionModelSupport.value = {};
+  formCustomModel.value = '';
+  formProviderType.value = 'openai';
+  availableModels.value = [];
+  nextTick(() => { skipAutoSave = false; });
+}
+
+async function fetchAvailableModels() {
+  const effectiveBaseUrl = formBaseUrl.value || getDefaultBaseUrl();
+  if (!effectiveBaseUrl || !formApiKey.value) {
+    alert(i18n('fillRequired'));
+    return;
+  }
+  isFetchingModels.value = true;
+  try {
+    const models = await fetchModels(effectiveBaseUrl, formApiKey.value, formProviderType.value);
+    availableModels.value = models.map(m => m.id);
+  } catch (e) {
+    const detail = e instanceof Error ? e.message : String(e);
+    alert(`${i18n('fetchModelsFailed')}: ${detail}`);
+  } finally {
+    isFetchingModels.value = false;
+  }
+}
+
+function addModel(model: string) {
+  if (!model || formModels.value.includes(model)) return;
+  formModels.value.push(model);
+  if (typeof formVisionModelSupport.value[model] !== 'boolean') {
+    formVisionModelSupport.value[model] = false;
+  }
+}
+
+function addCustomModel() {
+  const model = formCustomModel.value.trim();
+  if (model) { addModel(model); formCustomModel.value = ''; }
+}
+
+function handleProviderTypeChange(type: ProviderType) {
+  formProviderType.value = type;
+  // Clear base URL and name if they match another provider's default
+  const defaultUrls = ['https://api.anthropic.com', 'https://generativelanguage.googleapis.com', 'https://generativelanguage.googleapis.com/v1beta/openai/'];
+  if (defaultUrls.includes(formBaseUrl.value)) {
+    formBaseUrl.value = '';
+  }
+  const defaultNames = ['Gemini', 'Anthropic', 'Google Gemini', 'Anthropic Claude'];
+  if (defaultNames.includes(formName.value)) {
+    formName.value = '';
+  }
+}
+
+function removeModel(model: string) {
+  formModels.value = formModels.value.filter(m => m !== model);
+  delete formVisionModelSupport.value[model];
+}
+
+function isModelVisionEnabled(model: string): boolean {
+  return Boolean(formVisionModelSupport.value[model]);
+}
+
+function toggleModelVision(model: string): void {
+  formVisionModelSupport.value[model] = !isModelVisionEnabled(model);
+}
+
+async function saveCurrentProvider(silent = false) {
+  const effectiveName = formName.value || getDefaultProviderName();
+  const effectiveBaseUrl = formBaseUrl.value || getDefaultBaseUrl();
+  if (!effectiveName || !effectiveBaseUrl || !formApiKey.value) {
+    if (!silent) alert(i18n('fillRequired'));
+    return;
+  }
+  if (formModels.value.length === 0) {
+    if (!silent) alert(i18n('addAtLeastOneModel'));
+    return;
+  }
+  isSaving.value = true;
+  try {
+    const existingProvider = providers.value.find(p => p.id === selectedProviderId.value);
+    const selectedModel = existingProvider?.selectedModel && formModels.value.includes(existingProvider.selectedModel)
+      ? existingProvider.selectedModel : formModels.value[0];
+    const provider: AIProvider = {
+      id: isNewProvider.value ? crypto.randomUUID() : selectedProviderId.value!,
+      name: effectiveName,
+      baseUrl: effectiveBaseUrl,
+      apiKey: formApiKey.value,
+      models: [...formModels.value],
+      selectedModel,
+      visionModelSupport: Object.fromEntries(
+        formModels.value.map(model => [model, Boolean(formVisionModelSupport.value[model])]),
+      ),
+    };
+    if (formProviderType.value !== 'openai') {
+      provider.providerType = formProviderType.value;
+    }
+    await saveProvider(provider);
+    providers.value = await getAllProviders();
+    if (!activeProviderId.value || isNewProvider.value) {
+      activeProviderId.value = provider.id;
+      await setActiveProviderId(provider.id);
+    }
+    selectedProviderId.value = provider.id;
+    if (silent) {
+      autoSaveMessage.value = i18n('autoSaved');
+      if (autoSaveTimer) clearTimeout(autoSaveTimer);
+      autoSaveTimer = setTimeout(() => { autoSaveMessage.value = ''; }, 2000);
+    }
+  } finally {
+    isSaving.value = false;
+  }
+}
+
+async function removeProvider() {
+  if (!selectedProviderId.value || isNewProvider.value) return;
+  if (confirm(i18n('confirmDeleteProvider'))) {
+    await deleteProvider(selectedProviderId.value);
+    providers.value = await getAllProviders();
+    if (activeProviderId.value === selectedProviderId.value) {
+      activeProviderId.value = providers.value[0]?.id || null;
+      await setActiveProviderId(activeProviderId.value);
+    }
+    if (providers.value.length > 0) selectProvider(providers.value[0].id);
+    else selectedProviderId.value = null;
+  }
+}
+
+function selectSkill(id: string) { selectedSkillId.value = id; }
+
+function openImportModal() {
+  showImportModal.value = true;
+  importError.value = null;
+  importWarnings.value = [];
+}
+
+function closeImportModal() {
+  showImportModal.value = false;
+  importError.value = null;
+  importWarnings.value = [];
+}
+
+async function handleFolderImport(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const files = input.files;
+  if (!files || files.length === 0) return;
+  
+  isImporting.value = true;
+  importError.value = null;
+  importWarnings.value = [];
+  
+  try {
+    const result = await importSkillFromFolder(files);
+    if (result.success) {
+      await loadSkills();
+      if (result.skill) selectedSkillId.value = result.skill.id;
+      if (result.warnings) importWarnings.value = result.warnings;
+      if (!result.warnings?.length) closeImportModal();
+      // 通知其他页面 skills 已更新
+      browser.runtime.sendMessage({ type: 'SKILLS_CHANGED', action: 'added' });
+    } else {
+      importError.value = result.error || '导入失败';
+    }
+  } catch (e) {
+    importError.value = e instanceof Error ? e.message : 'Import failed';
+  } finally {
+    isImporting.value = false;
+    input.value = '';
+  }
+}
+
+async function removeSkill(id: string) {
+  if (confirm(i18n('confirmDeleteSkill'))) {
+    await deleteSkill(id);
+    await loadSkills();
+    if (selectedSkillId.value === id) selectedSkillId.value = skills.value[0]?.id || null;
+    // 通知其他页面 skills 已更新
+    browser.runtime.sendMessage({ type: 'SKILLS_CHANGED', action: 'deleted' });
+  }
+}
+
+async function handleUntrustScript(skillId: string, scriptName: string) {
+  if (confirm(i18n('confirmUntrustScript', { name: scriptName }))) {
+    await untrustScript(skillId, scriptName);
+    trustedScripts.value = await getTrustedScripts();
+  }
+}
+
+function formatDate(timestamp: number): string {
+  const locale = currentLanguage.value === 'zh-CN' ? 'zh-CN' : 'en-US';
+  return new Date(timestamp).toLocaleDateString(locale, {
+    year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+  });
+}
+
+// 语言切换
+async function handleLanguageChange(lang: Language) {
+  currentLanguage.value = lang;
+  await setLanguage(lang);
+}
+
+function formatUiFontScale(value: number): string {
+  return value.toFixed(2).replace(/\.?0+$/, '');
+}
+
+function parseUiFontScaleInput(): UiFontScale | null {
+  const trimmedValue = uiFontScaleInput.value.trim();
+  if (!trimmedValue) return null;
+  const parsedValue = Number(trimmedValue);
+  if (!Number.isFinite(parsedValue)) return null;
+  return normalizeUiFontScaleValue(parsedValue);
+}
+
+async function commitUiFontScale() {
+  const normalized = parseUiFontScaleInput();
+  if (normalized === null) {
+    uiFontScaleInput.value = formatUiFontScale(uiFontScale.value);
+    return;
+  }
+  uiFontScale.value = normalized;
+  uiFontScaleInput.value = formatUiFontScale(normalized);
+  applyUiFontScale(normalized);
+  await setUiFontScale(normalized);
+}
+
+// 悬浮球开关切换
+async function handleFloatingBallToggle(enabled: boolean) {
+  floatingBallEnabled.value = enabled;
+  await setFloatingBallEnabled(enabled);
+}
+
+// 划词引用开关切换
+async function handleSelectionQuoteToggle(enabled: boolean) {
+  selectionQuoteEnabled.value = enabled;
+  await setSelectionQuoteEnabled(enabled);
+}
+
+async function handleMaxPageContentLengthChange() {
+  const normalized = Number.isFinite(maxPageContentLength.value)
+    ? Math.max(1000, Math.floor(maxPageContentLength.value))
+    : 30000;
+  maxPageContentLength.value = normalized;
+  await setMaxPageContentLength(normalized);
+}
+
+async function handleMaxToolCallsChange() {
+  const normalized = Number.isFinite(maxToolCalls.value)
+    ? Math.max(1, Math.floor(maxToolCalls.value))
+    : 100;
+  maxToolCalls.value = normalized;
+  await setMaxToolCalls(normalized);
+}
+
+// 原始提取网站管理
+async function handleAddRawExtractSite() {
+  const site = newRawExtractSite.value.trim().toLowerCase();
+  if (site) {
+    await addRawExtractSite(site);
+    rawExtractSites.value = await getRawExtractSites();
+    newRawExtractSite.value = '';
+  }
+}
+
+async function handleRemoveRawExtractSite(site: string) {
+  await removeRawExtractSite(site);
+  rawExtractSites.value = await getRawExtractSites();
+}
+
+// ========== MCP Server 管理函数 ==========
+
+function selectMcpServer(id: string) {
+  skipMcpAutoSave = true;
+  selectedMcpServerId.value = id;
+  const server = mcpServers.value.find(s => s.id === id);
+  if (server) {
+    mcpFormName.value = server.name;
+    mcpFormUrl.value = server.url;
+    mcpFormDescription.value = server.description || '';
+    mcpFormAuthType.value = server.authType || 'none';
+    mcpFormAuthToken.value = server.authToken || '';
+    mcpFormEnabled.value = server.enabled;
+    mcpTestResult.value = null;
+  }
+  nextTick(() => { skipMcpAutoSave = false; });
+}
+
+function addNewMcpServer() {
+  skipMcpAutoSave = true;
+  selectedMcpServerId.value = 'new';
+  mcpFormName.value = '';
+  mcpFormUrl.value = '';
+  mcpFormDescription.value = '';
+  mcpFormAuthType.value = 'none';
+  mcpFormAuthToken.value = '';
+  mcpFormEnabled.value = true;
+  mcpTestResult.value = null;
+  nextTick(() => { skipMcpAutoSave = false; });
+}
+
+// 自动保存 MCP 配置（debounce 800ms）
+function debouncedMcpAutoSave() {
+  if (mcpAutoSaveDebounceTimer) clearTimeout(mcpAutoSaveDebounceTimer);
+  mcpAutoSaveDebounceTimer = setTimeout(() => {
+    if (!selectedMcpServerId.value) return;
+    // 新建 MCP server 时必须 name 和 url 都填完才自动保存
+    if (isNewMcpServer.value) {
+      if (!mcpFormName.value.trim() || !mcpFormUrl.value.trim()) return;
+    }
+    saveMcpServerConfig(true);
+  }, 800);
+}
+
+watch(
+  [mcpFormName, mcpFormUrl, mcpFormDescription, mcpFormAuthType, mcpFormAuthToken, mcpFormEnabled],
+  () => {
+    if (skipMcpAutoSave) return;
+    if (!selectedMcpServerId.value) return;
+    debouncedMcpAutoSave();
+  },
+);
+
+async function saveMcpServerConfig(silent = false) {
+  if (!mcpFormName.value.trim() || !mcpFormUrl.value.trim()) {
+    if (!silent) alert(i18n('fillRequired'));
+    return;
+  }
+
+  // 验证 URL 格式
+  try {
+    new URL(mcpFormUrl.value);
+  } catch {
+    if (!silent) alert(i18n('mcpInvalidUrl'));
+    return;
+  }
+
+  isMcpSaving.value = true;
+  try {
+    const server: McpServerConfig = {
+      id: isNewMcpServer.value ? generateMcpServerId() : selectedMcpServerId.value!,
+      name: mcpFormName.value.trim(),
+      url: mcpFormUrl.value.trim(),
+      description: mcpFormDescription.value.trim() || undefined,
+      authType: mcpFormAuthType.value,
+      authToken: mcpFormAuthType.value === 'bearer' ? mcpFormAuthToken.value.trim() || undefined : undefined,
+      enabled: mcpFormEnabled.value,
+    };
+    await saveMcpServer(server);
+    mcpServers.value = await getAllMcpServers();
+    selectedMcpServerId.value = server.id;
+    if (silent) {
+      autoSaveMessage.value = i18n('autoSaved');
+      if (autoSaveTimer) clearTimeout(autoSaveTimer);
+      autoSaveTimer = setTimeout(() => { autoSaveMessage.value = ''; }, 2000);
+    }
+  } finally {
+    isMcpSaving.value = false;
+  }
+}
+
+async function removeMcpServer() {
+  if (!selectedMcpServerId.value || isNewMcpServer.value) return;
+  if (confirm(i18n('mcpConfirmDelete'))) {
+    // 先断开连接
+    await mcpManager.disconnect(selectedMcpServerId.value);
+    await deleteMcpServer(selectedMcpServerId.value);
+    mcpServers.value = await getAllMcpServers();
+    if (mcpServers.value.length > 0) {
+      selectMcpServer(mcpServers.value[0].id);
+    } else {
+      selectedMcpServerId.value = null;
+    }
+  }
+}
+
+async function testMcpConnection() {
+  if (!mcpFormUrl.value.trim()) {
+    alert(i18n('mcpEnterUrl'));
+    return;
+  }
+  
+  isMcpTesting.value = true;
+  mcpTestResult.value = null;
+  
+  // 对于 OAuth，使用固定 ID 以便复用 token
+  const testId = mcpFormAuthType.value === 'oauth' 
+    ? (isNewMcpServer.value ? 'oauth-test' : selectedMcpServerId.value!)
+    : 'test-' + Date.now();
+  
+  const testConfig: McpServerConfig = {
+    id: testId,
+    name: 'Test',
+    url: mcpFormUrl.value.trim(),
+    authType: mcpFormAuthType.value,
+    authToken: mcpFormAuthType.value === 'bearer' ? mcpFormAuthToken.value.trim() || undefined : undefined,
+    enabled: true,
+  };
+  
+  // OAuth 可能需要重试（第一次触发授权，第二次使用 token）
+  const maxRetries = mcpFormAuthType.value === 'oauth' ? 2 : 1;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      console.log(`[MCP Test] 尝试连接 (${attempt}/${maxRetries})`);
+      const tools = await mcpManager.connect(testConfig);
+      await mcpManager.disconnect(testConfig.id);
+      
+      mcpTestResult.value = {
+        success: true,
+        message: i18n('mcpTestSuccess'),
+        toolCount: tools.length,
+      };
+      break; // 成功，退出循环
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.log(`[MCP Test] 连接失败 (${attempt}/${maxRetries}):`, errorMessage);
+      
+      // 如果是最后一次尝试，或者不是 OAuth 相关错误，显示错误
+      if (attempt === maxRetries || !errorMessage.toLowerCase().includes('unauthorized')) {
+        mcpTestResult.value = {
+          success: false,
+          message: errorMessage,
+        };
+      }
+      // 否则继续重试
+    }
+  }
+  
+  isMcpTesting.value = false;
+}
+
+async function handleMcpToggle(id: string, enabled: boolean) {
+  await toggleMcpServer(id, enabled);
+  mcpServers.value = await getAllMcpServers();
+  if (selectedMcpServerId.value === id) {
+    mcpFormEnabled.value = enabled;
+  }
+}
+
+// ========== 预设操作管理函数 ==========
+
+function openAddPresetModal() {
+  isEditingPreset.value = false;
+  selectedPresetId.value = null;
+  presetFormName.value = '';
+  presetFormContent.value = '';
+  showPresetModal.value = true;
+}
+
+function openEditPresetModal(preset: PresetAction) {
+  isEditingPreset.value = true;
+  selectedPresetId.value = preset.id;
+  presetFormName.value = preset.name;
+  presetFormContent.value = preset.content;
+  showPresetModal.value = true;
+}
+
+function closePresetModal() {
+  showPresetModal.value = false;
+  selectedPresetId.value = null;
+  presetFormName.value = '';
+  presetFormContent.value = '';
+}
+
+async function savePreset() {
+  if (!presetFormName.value.trim() || !presetFormContent.value.trim()) {
+    alert(i18n('fillRequired'));
+    return;
+  }
+
+  if (isEditingPreset.value && selectedPresetId.value) {
+    await updatePresetAction(selectedPresetId.value, presetFormName.value, presetFormContent.value);
+  } else {
+    await addPresetAction(presetFormName.value, presetFormContent.value);
+  }
+
+  presetActions.value = await getPresetActions();
+  closePresetModal();
+}
+
+async function removePreset(id: string) {
+  if (confirm(i18n('confirmDeletePreset'))) {
+    await deletePresetAction(id);
+    presetActions.value = await getPresetActions();
+  }
+}
+
+// 数据导出
+async function handleExport() {
+  isExporting.value = true;
+  try {
+    const data = await exportAllData();
+    downloadExportData(data);
+    showToast(i18n('exportSuccess'));
+  } catch (e) {
+    showToast(i18n('exportFailed'));
+  } finally {
+    isExporting.value = false;
+  }
+}
+
+// 选择导入文件 -> 弹出确认
+function handleImportFileSelect(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) return;
+  pendingImportFile.value = file;
+  showImportConfirmModal.value = true;
+  // 重置 input，允许重复选择同一文件
+  input.value = '';
+}
+
+// 确认导入
+async function confirmImport() {
+  if (!pendingImportFile.value) return;
+  showImportConfirmModal.value = false;
+  isImportingData.value = true;
+  try {
+    const raw = await readImportFile(pendingImportFile.value);
+    const result = await importAllData(raw);
+    if (result.success && result.stats) {
+      showToast(i18n('importStats', {
+        providers: result.stats.providers,
+        chatSessions: result.stats.chatSessions,
+        skills: result.stats.skills,
+        mcpServers: result.stats.mcpServers,
+      }));
+      // 通知其他页面 skills 已更新，确保侧边栏立即刷新 skill 提示词和工具列表
+      browser.runtime.sendMessage({ type: 'SKILLS_CHANGED', action: 'imported' });
+      // 刷新页面数据
+      await loadAllData();
+    } else {
+      const errorKey = result.error === 'INVALID_JSON' ? 'importDataInvalidJson'
+        : result.error === 'INVALID_FORMAT' ? 'importDataInvalidFormat'
+        : result.error === 'FILE_READ_ERROR' ? 'importDataFileError'
+        : 'importDataFailed';
+      showToast(i18n(errorKey));
+    }
+  } catch {
+    showToast(i18n('importDataFailed'));
+  } finally {
+    isImportingData.value = false;
+    pendingImportFile.value = null;
+  }
+}
+
+function cancelImport() {
+  showImportConfirmModal.value = false;
+  pendingImportFile.value = null;
+}
+
+function showToast(message: string) {
+  autoSaveMessage.value = message;
+  setTimeout(() => { autoSaveMessage.value = ''; }, 3000);
+}
+</script>
+
+<template>
+  <div class="options-page">
+    <nav class="nav-sidebar">
+      <div class="nav-header"><h1><a href="https://tactus.cc.cd/" target="_blank" rel="noopener noreferrer" class="brand-link">Tactus</a></h1></div>
+      <div class="nav-menu">
+        <div class="nav-item" :class="{ active: activeNav === 'models' }" @click="activeNav = 'models'">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+          </svg>
+          <span>{{ i18n('navModels') }}</span>
+        </div>
+        <div class="nav-item" :class="{ active: activeNav === 'skills' }" @click="activeNav = 'skills'">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/>
+          </svg>
+          <span>{{ i18n('navSkills') }}</span>
+        </div>
+        <div class="nav-item" :class="{ active: activeNav === 'mcp' }" @click="activeNav = 'mcp'">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+            <path d="M8 21h8M12 17v4"/>
+          </svg>
+          <span>{{ i18n('navMcp') }}</span>
+        </div>
+        <div class="nav-item" :class="{ active: activeNav === 'settings' }" @click="activeNav = 'settings'">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/>
+          </svg>
+          <span>{{ i18n('navSettings') }}</span>
+        </div>
+      </div>
+    </nav>
+
+    <main class="main-content">
+      <template v-if="activeNav === 'models'">
+        <div class="content-header">
+          <h2>{{ i18n('modelConfig') }}</h2>
+          <p class="content-desc">{{ i18n('modelConfigDesc') }}</p>
+        </div>
+        <div class="content-body">
+          <aside class="provider-sidebar">
+            <div class="sidebar-header">
+              <span class="section-label">{{ i18n('providerList') }}</span>
+              <button class="add-btn" @click="addNewProvider" :title="i18n('addProvider')">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+              </button>
+            </div>
+            <div class="provider-list">
+              <div v-for="p in providers" :key="p.id" class="provider-item" :class="{ selected: p.id === selectedProviderId }" @click="selectProvider(p.id)">
+                <div class="provider-info">
+                  <div class="provider-name">{{ p.name }}</div>
+                  <div class="provider-model">{{ i18n('modelsCount', { count: (Array.isArray(p.models) ? p.models : []).length }) }}</div>
+                </div>
+              </div>
+              <div v-if="providers.length === 0" class="empty-list">{{ i18n('noProviders') }}</div>
+            </div>
+          </aside>
+          <div class="provider-form-area">
+            <div v-if="selectedProviderId" class="form-container">
+              <div class="form-header">
+                <h3>{{ isNewProvider ? i18n('addProvider') : i18n('editProvider') }}</h3>
+                <div class="form-actions" v-if="!isNewProvider">
+                  <button class="btn btn-danger" @click="removeProvider">{{ i18n('delete') }}</button>
+                </div>
+              </div>
+              <div class="form-body">
+                <div class="form-group" v-if="isNewProvider">
+                  <label>{{ i18n('providerType') }}</label>
+                  <div class="auth-type-selector">
+                    <button
+                      class="auth-type-btn"
+                      :class="{ active: formProviderType === 'openai' }"
+                      @click="handleProviderTypeChange('openai')"
+                    >
+                      {{ i18n('providerTypeOpenAI') }}
+                    </button>
+                    <button
+                      class="auth-type-btn"
+                      :class="{ active: formProviderType === 'gemini' }"
+                      @click="handleProviderTypeChange('gemini')"
+                    >
+                      {{ i18n('providerTypeGemini') }}
+                    </button>
+                    <button
+                      class="auth-type-btn"
+                      :class="{ active: formProviderType === 'anthropic' }"
+                      @click="handleProviderTypeChange('anthropic')"
+                    >
+                      {{ i18n('providerTypeAnthropic') }}
+                    </button>
+                  </div>
+                </div>
+                <div class="form-group">
+                  <label>{{ i18n('providerName') }}</label>
+                  <input v-model="formName" :placeholder="providerNameDynPlaceholder" />
+                </div>
+                <div class="form-group">
+                  <label>{{ i18n('baseUrl') }}</label>
+                  <input v-model="formBaseUrl" :placeholder="baseUrlDynPlaceholder" />
+                  <p class="form-hint">{{ i18n('baseUrlHint') }}</p>
+                  <p v-if="apiEndpointPreview" class="api-endpoint-preview">API endpoint: {{ apiEndpointPreview }}</p>
+                </div>
+                <div class="form-group">
+                  <label>{{ i18n('apiKey') }}</label>
+                  <input v-model="formApiKey" type="password" :placeholder="i18n('apiKeyPlaceholder')" />
+                </div>
+                <div class="form-group">
+                  <div class="label-row">
+                    <label>{{ i18n('modelList') }}</label>
+                    <div class="label-row-actions">
+                      <button class="fetch-btn" @click="fetchAvailableModels" :disabled="isFetchingModels">{{ isFetchingModels ? i18n('fetchingModels') : i18n('fetchModels') }}</button>
+                    </div>
+                  </div>
+                  <div v-if="availableModels.length > 0" class="available-models">
+                    <div class="available-models-label">{{ i18n('availableModels') }}</div>
+                    <div class="model-tags">
+                      <button v-for="m in availableModels" :key="m" class="model-tag" :class="{ added: formModels.includes(m) }" @click="addModel(m)" :disabled="formModels.includes(m)">{{ m }}</button>
+                    </div>
+                  </div>
+                  <div class="custom-model-input">
+                    <input v-model="formCustomModel" :placeholder="i18n('customModelPlaceholder')" @keydown.enter="addCustomModel" />
+                    <button class="add-model-btn" @click="addCustomModel" :disabled="!formCustomModel.trim()">{{ i18n('add') }}</button>
+                  </div>
+                  <div v-if="formModels.length > 0" class="selected-models">
+                    <div class="selected-models-label">{{ i18n('addedModels') }}</div>
+                    <p class="selected-models-hint">{{ i18n('supportsVisionDesc') }}</p>
+                    <div class="model-list">
+                      <div v-for="m in formModels" :key="m" class="model-item">
+                        <div class="model-item-main">
+                          <span class="model-name">{{ m }}</span>
+                          <span class="model-vision-state" :class="{ enabled: isModelVisionEnabled(m) }">
+                            {{ isModelVisionEnabled(m) ? i18n('modelVisionEnabled') : i18n('modelVisionDisabled') }}
+                          </span>
+                        </div>
+                        <div class="model-actions">
+                          <button
+                            class="toggle-btn model-vision-toggle"
+                            :class="{ active: isModelVisionEnabled(m) }"
+                            @click="toggleModelVision(m)"
+                            type="button"
+                          >
+                            <span class="toggle-track">
+                              <span class="toggle-thumb"></span>
+                            </span>
+                            <span class="toggle-label">{{ i18n('modelVision') }}</span>
+                          </button>
+                          <button class="remove-model-btn" @click="removeModel(m)" :title="i18n('delete')">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="form-footer" v-if="isNewProvider || isSaving">
+                  <button v-if="isNewProvider" class="btn btn-primary" @click="saveCurrentProvider()" :disabled="isSaving">{{ isSaving ? i18n('saving') : i18n('saveConfig') }}</button>
+                  <span v-else-if="isSaving" class="auto-save-hint">{{ i18n('saving') }}</span>
+                </div>
+              </div>
+            </div>
+            <div v-else class="empty-form"><p>{{ i18n('selectOrAddProvider') }}</p></div>
+          </div>
+        </div>
+      </template>
+
+      <template v-if="activeNav === 'skills'">
+        <div class="content-header">
+          <h2>{{ i18n('skillsManagement') }}</h2>
+          <p class="content-desc">{{ i18n('skillsManagementDesc') }}</p>
+        </div>
+        <div class="content-body">
+          <aside class="provider-sidebar">
+            <div class="sidebar-header">
+              <span class="section-label">{{ i18n('installedSkills') }}</span>
+              <button class="add-btn" @click="openImportModal" :title="i18n('importSkill')">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+              </button>
+            </div>
+            <div class="provider-list">
+              <div v-for="skill in skills" :key="skill.id" class="provider-item" :class="{ selected: skill.id === selectedSkillId }" @click="selectSkill(skill.id)">
+                <div class="provider-info">
+                  <div class="provider-name">{{ skill.metadata.name }}</div>
+                  <div class="provider-model">{{ i18n('scriptsCount', { count: skill.scripts.length }) }}</div>
+                </div>
+              </div>
+              <div v-if="skills.length === 0" class="empty-list">{{ i18n('noSkills') }}</div>
+            </div>
+          </aside>
+          <div class="provider-form-area">
+            <div v-if="selectedSkill" class="form-container">
+              <div class="form-header">
+                <h3>{{ selectedSkill.metadata.name }}</h3>
+                <div class="form-actions">
+                  <button class="btn btn-danger" @click="removeSkill(selectedSkill.id)">{{ i18n('delete') }}</button>
+                </div>
+              </div>
+              <div class="form-body">
+                <div class="skill-info-section">
+                  <div class="skill-meta">
+                    <span class="skill-badge">{{ selectedSkill.source === 'imported' ? i18n('imported') : i18n('builtin') }}</span>
+                    <span class="skill-date">{{ formatDate(selectedSkill.importedAt) }}</span>
+                  </div>
+                  <div class="skill-description">{{ selectedSkill.metadata.description }}</div>
+                  <div v-if="selectedSkill.metadata.compatibility" class="skill-compat">
+                    <span class="compat-label">{{ i18n('compatibility') }}</span>{{ selectedSkill.metadata.compatibility }}
+                  </div>
+                </div>
+                <div v-if="selectedSkill.scripts.length > 0" class="form-group">
+                  <label>{{ i18n('scriptFiles') }}</label>
+                  <div class="script-list">
+                    <div v-for="script in selectedSkill.scripts" :key="script.name" class="script-item">
+                      <div class="script-info">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M10 12l-2 2 2 2M14 12l2 2-2 2"/>
+                        </svg>
+                        <span class="script-name">{{ script.name }}</span>
+                      </div>
+                      <div class="script-actions">
+                        <span v-if="skillTrustedScripts.some(t => t.scriptName === script.name)" class="trusted-badge" @click="handleUntrustScript(selectedSkill!.id, script.name)" :title="i18n('confirmUntrustScript', { name: script.name })">{{ i18n('trusted') }}</span>
+                        <span v-else class="untrusted-badge">{{ i18n('needConfirm') }}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <p class="script-hint">{{ i18n('scriptHint') }}</p>
+                </div>
+                <div v-if="selectedSkill.references.length > 0" class="form-group">
+                  <label>{{ i18n('referenceFiles') }}</label>
+                  <div class="resource-list">
+                    <div v-for="ref in selectedSkill.references" :key="ref.name" class="resource-item">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg>
+                      <span>{{ ref.name }}</span>
+                    </div>
+                  </div>
+                </div>
+                <div v-if="selectedSkill.assets.length > 0" class="form-group">
+                  <label>{{ i18n('assetFiles') }}</label>
+                  <div class="resource-list">
+                    <div v-for="asset in selectedSkill.assets" :key="asset.name" class="resource-item">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+                      <span>{{ asset.name }}</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="form-group">
+                  <label>{{ i18n('instructionsPreview') }}</label>
+                  <div class="instructions-preview">
+                    <pre>{{ selectedSkill.instructions.slice(0, 500) }}{{ selectedSkill.instructions.length > 500 ? '...' : '' }}</pre>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div v-else class="empty-form">
+              <div class="empty-icon">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>
+              </div>
+              <p>{{ i18n('selectSkillOrImport') }}</p>
+              <button class="btn btn-primary" @click="openImportModal">{{ i18n('importSkill') }}</button>
+            </div>
+          </div>
+        </div>
+      </template>
+
+      <!-- MCP Server 配置页面 -->
+      <template v-if="activeNav === 'mcp'">
+        <div class="content-header">
+          <h2>{{ i18n('mcpConfig') }}</h2>
+          <p class="content-desc">{{ i18n('mcpConfigDesc') }}</p>
+        </div>
+        <div class="content-body">
+          <aside class="provider-sidebar">
+            <div class="sidebar-header">
+              <span class="section-label">{{ i18n('mcpServerList') }}</span>
+              <button class="add-btn" @click="addNewMcpServer" :title="i18n('mcpAddServer')">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+              </button>
+            </div>
+            <div class="provider-list">
+              <div v-for="server in mcpServers" :key="server.id" class="provider-item" :class="{ selected: server.id === selectedMcpServerId }" @click="selectMcpServer(server.id)">
+                <div class="provider-info">
+                  <div class="provider-name">{{ server.name }}</div>
+                  <div class="provider-model mcp-url">{{ server.url }}</div>
+                </div>
+                <span v-if="server.enabled" class="mcp-status-badge enabled">{{ i18n('mcpEnabled') }}</span>
+                <span v-else class="mcp-status-badge disabled">{{ i18n('mcpDisabled') }}</span>
+              </div>
+              <div v-if="mcpServers.length === 0" class="empty-list">{{ i18n('mcpNoServers') }}</div>
+            </div>
+          </aside>
+          <div class="provider-form-area">
+            <div v-if="selectedMcpServerId" class="form-container">
+              <div class="form-header">
+                <h3>{{ isNewMcpServer ? i18n('mcpAddServer') : i18n('mcpEditServer') }}</h3>
+                <div class="form-actions" v-if="!isNewMcpServer">
+                  <button class="btn btn-danger" @click="removeMcpServer">{{ i18n('delete') }}</button>
+                </div>
+              </div>
+              <div class="form-body">
+                <div class="form-group">
+                  <label>{{ i18n('mcpServerName') }}</label>
+                  <input v-model="mcpFormName" :placeholder="i18n('mcpServerNamePlaceholder')" />
+                </div>
+                <div class="form-group">
+                  <label>{{ i18n('mcpServerUrl') }}</label>
+                  <input v-model="mcpFormUrl" :placeholder="i18n('mcpServerUrlPlaceholder')" />
+                  <p class="form-hint">{{ i18n('mcpServerUrlHint') }}</p>
+                </div>
+                <div class="form-group">
+                  <label>{{ i18n('mcpServerDescription') }}</label>
+                  <input v-model="mcpFormDescription" :placeholder="i18n('mcpServerDescriptionPlaceholder')" />
+                </div>
+                <div class="form-group">
+                  <label>{{ i18n('mcpAuthType') }}</label>
+                  <div class="auth-type-selector">
+                    <button 
+                      class="auth-type-btn" 
+                      :class="{ active: mcpFormAuthType === 'none' }"
+                      @click="mcpFormAuthType = 'none'"
+                    >
+                      {{ i18n('mcpAuthNone') }}
+                    </button>
+                    <button 
+                      class="auth-type-btn" 
+                      :class="{ active: mcpFormAuthType === 'bearer' }"
+                      @click="mcpFormAuthType = 'bearer'"
+                    >
+                      {{ i18n('mcpAuthBearer') }}
+                    </button>
+                    <button 
+                      class="auth-type-btn" 
+                      :class="{ active: mcpFormAuthType === 'oauth' }"
+                      @click="mcpFormAuthType = 'oauth'"
+                    >
+                      {{ i18n('mcpAuthOAuth') }}
+                    </button>
+                  </div>
+                </div>
+                <div class="form-group" v-if="mcpFormAuthType === 'bearer'">
+                  <label>{{ i18n('mcpAuthToken') }}</label>
+                  <input v-model="mcpFormAuthToken" type="password" :placeholder="i18n('mcpAuthTokenPlaceholder')" />
+                  <p class="form-hint">{{ i18n('mcpAuthTokenHint') }}</p>
+                </div>
+                <div class="form-group" v-if="mcpFormAuthType === 'oauth'">
+                  <p class="form-hint oauth-hint">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <circle cx="12" cy="12" r="10"/>
+                      <path d="M12 16v-4M12 8h.01"/>
+                    </svg>
+                    {{ i18n('mcpOAuthHint') }}
+                  </p>
+                </div>
+                <div class="form-group" v-if="!isNewMcpServer">
+                  <label>{{ i18n('mcpServerStatus') }}</label>
+                  <button 
+                    class="toggle-btn"
+                    :class="{ active: mcpFormEnabled }"
+                    @click="handleMcpToggle(selectedMcpServerId!, !mcpFormEnabled)"
+                  >
+                    <span class="toggle-track">
+                      <span class="toggle-thumb"></span>
+                    </span>
+                    <span class="toggle-label">{{ mcpFormEnabled ? i18n('mcpEnabled') : i18n('mcpDisabled') }}</span>
+                  </button>
+                </div>
+                
+                <!-- 测试连接 -->
+                <div class="form-group">
+                  <div class="label-row">
+                    <label>{{ i18n('mcpTestConnection') }}</label>
+                    <button class="fetch-btn" @click="testMcpConnection" :disabled="isMcpTesting || !mcpFormUrl.trim()">
+                      {{ isMcpTesting ? i18n('mcpTesting') : i18n('mcpTest') }}
+                    </button>
+                  </div>
+                  <div v-if="mcpTestResult" class="mcp-test-result" :class="{ success: mcpTestResult.success, error: !mcpTestResult.success }">
+                    <svg v-if="mcpTestResult.success" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M22 11.08V12a10 10 0 11-5.93-9.14"/>
+                      <path d="M22 4L12 14.01l-3-3"/>
+                    </svg>
+                    <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <circle cx="12" cy="12" r="10"/>
+                      <line x1="15" y1="9" x2="9" y2="15"/>
+                      <line x1="9" y1="9" x2="15" y2="15"/>
+                    </svg>
+                    <span>{{ mcpTestResult.message }}</span>
+                    <span v-if="mcpTestResult.toolCount !== undefined" class="tool-count">
+                      ({{ i18n('mcpToolCount', { count: mcpTestResult.toolCount }) }})
+                    </span>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+            <div v-else class="empty-form">
+              <div class="empty-icon">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+                  <path d="M8 21h8M12 17v4"/>
+                </svg>
+              </div>
+              <p>{{ i18n('mcpSelectOrAdd') }}</p>
+              <button class="btn btn-primary" @click="addNewMcpServer">{{ i18n('mcpAddServer') }}</button>
+            </div>
+          </div>
+        </div>
+      </template>
+
+      <template v-if="activeNav === 'settings'">
+        <div class="content-header">
+          <h2>{{ i18n('generalSettings') }}</h2>
+          <p class="content-desc">{{ i18n('generalSettingsDesc') }}</p>
+        </div>
+        <div class="content-body settings-body">
+          <div class="settings-section">
+            <div class="settings-card">
+              <div class="settings-item">
+                <div class="settings-item-info">
+                  <div class="settings-item-label">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <circle cx="12" cy="12" r="10"/>
+                      <path d="M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/>
+                    </svg>
+                    <span>{{ i18n('language') }}</span>
+                  </div>
+                  <p class="settings-item-desc">{{ i18n('languageDesc') }}</p>
+                </div>
+                <div class="settings-item-control">
+                  <div class="language-selector">
+                    <button 
+                      class="lang-btn" 
+                      :class="{ active: currentLanguage === 'en' }"
+                      @click="handleLanguageChange('en')"
+                    >
+                      English
+                    </button>
+                    <button 
+                      class="lang-btn" 
+                      :class="{ active: currentLanguage === 'zh-CN' }"
+                      @click="handleLanguageChange('zh-CN')"
+                    >
+                      简体中文
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="settings-divider"></div>
+
+              <div class="settings-item settings-item-vertical">
+                <div class="settings-item-info">
+                  <div class="settings-item-label">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M4 7h16M4 12h16M4 17h10"/>
+                    </svg>
+                    <span>{{ i18n('fontSize') }}</span>
+                  </div>
+                  <p class="settings-item-desc">{{ i18n('fontSizeDesc') }}</p>
+                </div>
+                <div class="settings-item-content">
+                  <div class="font-scale-panel">
+                    <div class="site-input-row font-scale-input-row">
+                      <input
+                        v-model="uiFontScaleInput"
+                        class="site-input font-scale-number"
+                        type="text"
+                        inputmode="decimal"
+                        :placeholder="`${UI_FONT_SCALE_DEFAULT}`"
+                        @keydown.enter.prevent="commitUiFontScale"
+                      />
+                      <button class="btn btn-primary btn-sm" @click="commitUiFontScale">
+                        {{ i18n('save') }}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="settings-divider" v-if="!isFirefox"></div>
+
+              <div class="settings-item" v-if="!isFirefox">
+                <div class="settings-item-info">
+                  <div class="settings-item-label">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <circle cx="12" cy="12" r="10"/>
+                      <circle cx="12" cy="12" r="3"/>
+                    </svg>
+                    <span>{{ i18n('floatingBall') }}</span>
+                  </div>
+                  <p class="settings-item-desc">{{ i18n('floatingBallDesc') }}</p>
+                </div>
+                <div class="settings-item-control">
+                  <button 
+                    class="toggle-btn"
+                    :class="{ active: floatingBallEnabled }"
+                    @click="handleFloatingBallToggle(!floatingBallEnabled)"
+                  >
+                    <span class="toggle-track">
+                      <span class="toggle-thumb"></span>
+                    </span>
+                    <span class="toggle-label">{{ floatingBallEnabled ? i18n('floatingBallEnabled') : i18n('floatingBallDisabled') }}</span>
+                  </button>
+                </div>
+              </div>
+              
+              <div class="settings-divider"></div>
+              
+              <div class="settings-item">
+                <div class="settings-item-info">
+                  <div class="settings-item-label">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M17 3a2.85 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>
+                    </svg>
+                    <span>{{ i18n('selectionQuote') }}</span>
+                  </div>
+                  <p class="settings-item-desc">{{ i18n('selectionQuoteDesc') }}</p>
+                </div>
+                <div class="settings-item-control">
+                  <button 
+                    class="toggle-btn"
+                    :class="{ active: selectionQuoteEnabled }"
+                    @click="handleSelectionQuoteToggle(!selectionQuoteEnabled)"
+                  >
+                    <span class="toggle-track">
+                      <span class="toggle-thumb"></span>
+                    </span>
+                    <span class="toggle-label">{{ selectionQuoteEnabled ? i18n('floatingBallEnabled') : i18n('floatingBallDisabled') }}</span>
+                  </button>
+                </div>
+              </div>
+              
+              <div class="settings-divider"></div>
+              
+              <div class="settings-item settings-item-vertical">
+                <div class="settings-item-info">
+                  <div class="settings-item-label">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M4 4h16v16H4z"/>
+                      <path d="M8 8h8M8 12h8M8 16h5"/>
+                    </svg>
+                    <span>{{ i18n('pageContentLimit') }}</span>
+                  </div>
+                  <p class="settings-item-desc">{{ i18n('pageContentLimitDesc') }}</p>
+                </div>
+                <div class="settings-item-content">
+                  <div class="site-input-row">
+                    <input
+                      v-model.number="maxPageContentLength"
+                      type="number"
+                      min="1000"
+                      step="1000"
+                      class="site-input"
+                      @change="handleMaxPageContentLengthChange"
+                    />
+                    <button class="btn btn-primary btn-sm" @click="handleMaxPageContentLengthChange">
+                      {{ i18n('save') }}
+                    </button>
+                  </div>
+                  <p class="settings-hint">{{ i18n('pageContentLimitHint') }}</p>
+                </div>
+              </div>
+
+              <div class="settings-divider"></div>
+
+              <div class="settings-item settings-item-vertical">
+                <div class="settings-item-info">
+                  <div class="settings-item-label">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M3 3h18v4H3z"/>
+                      <path d="M3 10h18v4H3z"/>
+                      <path d="M3 17h18v4H3z"/>
+                    </svg>
+                    <span>{{ i18n('toolCallLimit') }}</span>
+                  </div>
+                  <p class="settings-item-desc">{{ i18n('toolCallLimitDesc') }}</p>
+                </div>
+                <div class="settings-item-content">
+                  <div class="site-input-row">
+                    <input
+                      v-model.number="maxToolCalls"
+                      type="number"
+                      min="1"
+                      step="1"
+                      class="site-input"
+                      @change="handleMaxToolCallsChange"
+                    />
+                    <button class="btn btn-primary btn-sm" @click="handleMaxToolCallsChange">
+                      {{ i18n('save') }}
+                    </button>
+                  </div>
+                  <p class="settings-hint">{{ i18n('toolCallLimitHint') }}</p>
+                </div>
+              </div>
+
+              <div class="settings-divider"></div>
+
+              <div class="settings-item settings-item-vertical">
+                <div class="settings-item-info">
+                  <div class="settings-item-label">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+                      <path d="M14 2v6h6"/>
+                      <path d="M16 13H8M16 17H8M10 9H8"/>
+                    </svg>
+                    <span>{{ i18n('rawExtractSites') }}</span>
+                  </div>
+                  <p class="settings-item-desc">{{ i18n('rawExtractSitesDesc') }}</p>
+                </div>
+                <div class="settings-item-content">
+                  <div class="site-input-row">
+                    <input 
+                      v-model="newRawExtractSite"
+                      :placeholder="i18n('rawExtractSitesPlaceholder')"
+                      @keydown.enter="handleAddRawExtractSite"
+                      class="site-input"
+                    />
+                    <button class="btn btn-primary btn-sm" @click="handleAddRawExtractSite" :disabled="!newRawExtractSite.trim()">
+                      {{ i18n('addSite') }}
+                    </button>
+                  </div>
+                  <p class="settings-hint">{{ i18n('rawExtractSitesHint') }}</p>
+                  <div class="site-tags" v-if="rawExtractSites.length > 0">
+                    <span v-for="site in rawExtractSites" :key="site" class="site-tag">
+                      {{ site }}
+                      <button class="site-tag-remove" @click="handleRemoveRawExtractSite(site)" :title="i18n('delete')">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <path d="M18 6L6 18M6 6l12 12"/>
+                        </svg>
+                      </button>
+                    </span>
+                  </div>
+                  <div v-else class="no-sites">{{ i18n('noSitesConfigured') }}</div>
+                </div>
+              </div>
+
+              <div class="settings-divider"></div>
+
+              <div class="settings-item settings-item-vertical">
+                <div class="settings-item-info">
+                  <div class="settings-item-label">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+                    </svg>
+                    <span>{{ i18n('presetActions') }}</span>
+                  </div>
+                  <p class="settings-item-desc">{{ i18n('presetActionsDesc') }}</p>
+                </div>
+                <div class="settings-item-content">
+                  <div class="preset-actions-list" v-if="presetActions.length > 0">
+                    <div
+                      v-for="preset in presetActions"
+                      :key="preset.id"
+                      class="preset-item"
+                    >
+                      <div class="preset-info">
+                        <span class="preset-name">{{ preset.name }}</span>
+                        <span class="preset-content-preview">{{ preset.content.length > 50 ? preset.content.slice(0, 50) + '...' : preset.content }}</span>
+                      </div>
+                      <div class="preset-actions">
+                        <button class="preset-edit-btn" @click="openEditPresetModal(preset)" :title="i18n('editPreset')">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
+                            <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                          </svg>
+                        </button>
+                        <button class="preset-delete-btn" @click="removePreset(preset.id)" :title="i18n('delete')">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  <div v-else class="no-sites">{{ i18n('noPresets') }}</div>
+                  <button class="btn btn-primary btn-sm preset-add-btn" @click="openAddPresetModal">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M12 5v14M5 12h14"/>
+                    </svg>
+                    {{ i18n('addPreset') }}
+                  </button>
+                </div>
+              </div>
+
+              <div class="settings-divider"></div>
+
+              <div class="settings-item settings-item-vertical">
+                <div class="settings-item-info">
+                  <div class="settings-item-label">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                      <polyline points="7 10 12 15 17 10"/>
+                      <line x1="12" y1="15" x2="12" y2="3"/>
+                    </svg>
+                    <span>{{ i18n('dataTransfer') }}</span>
+                  </div>
+                  <p class="settings-item-desc">{{ i18n('dataTransferDesc') }}</p>
+                </div>
+                <div class="settings-item-content">
+                  <div class="data-transfer-actions">
+                    <div class="data-transfer-card">
+                      <div class="data-transfer-card-info">
+                        <span class="data-transfer-card-title">{{ i18n('exportData') }}</span>
+                        <span class="data-transfer-card-desc">{{ i18n('exportDataDesc') }}</span>
+                      </div>
+                      <button class="btn btn-primary btn-sm" @click="handleExport" :disabled="isExporting">
+                        <svg v-if="!isExporting" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                          <polyline points="7 10 12 15 17 10"/>
+                          <line x1="12" y1="15" x2="12" y2="3"/>
+                        </svg>
+                        {{ isExporting ? i18n('exporting') : i18n('exportData') }}
+                      </button>
+                    </div>
+                    <div class="data-transfer-card">
+                      <div class="data-transfer-card-info">
+                        <span class="data-transfer-card-title">{{ i18n('importData') }}</span>
+                        <span class="data-transfer-card-desc">{{ i18n('importDataDesc') }}</span>
+                      </div>
+                      <input type="file" id="data-import-input" accept=".json" @change="handleImportFileSelect" class="hidden-input" />
+                      <label for="data-import-input" class="btn btn-outline btn-sm" :class="{ disabled: isImportingData }">
+                        <svg v-if="!isImportingData" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                          <polyline points="17 8 12 3 7 8"/>
+                          <line x1="12" y1="3" x2="12" y2="15"/>
+                        </svg>
+                        {{ isImportingData ? i18n('importingData') : i18n('importDataBtn') }}
+                      </label>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </template>
+    </main>
+
+    <div v-if="showImportModal" class="modal-overlay" @click.self="closeImportModal">
+      <div class="modal import-modal">
+        <div class="modal-header">
+          <h3>{{ i18n('importSkillTitle') }}</h3>
+          <button class="close-btn" @click="closeImportModal">×</button>
+        </div>
+        <div class="modal-body">
+          <p class="import-desc">{{ i18n('importSkillDesc') }}</p>
+          <div class="import-area">
+            <input type="file" id="skill-folder-input" webkitdirectory directory @change="handleFolderImport" :disabled="isImporting" />
+            <label for="skill-folder-input" class="import-label" :class="{ disabled: isImporting }">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+              <span>{{ isImporting ? i18n('importing') : i18n('selectFolder') }}</span>
+            </label>
+          </div>
+          <div v-if="importError" class="import-error">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+            {{ importError }}
+          </div>
+          <div v-if="importWarnings.length > 0" class="import-warnings">
+            <div class="warning-title">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+              {{ i18n('importWarnings') }}
+            </div>
+            <ul><li v-for="(w, i) in importWarnings" :key="i">{{ w }}</li></ul>
+            <button class="btn btn-primary" @click="closeImportModal">{{ i18n('confirm') }}</button>
+          </div>
+          <div class="import-help">
+            <h4>{{ i18n('skillFolderStructure') }}</h4>
+            <pre>my-skill/
+├── SKILL.md          # {{ i18n('required') }}
+├── scripts/          # {{ i18n('optional') }} ({{ i18n('jsOnly') }})
+├── references/       # {{ i18n('optional') }}
+└── assets/           # {{ i18n('optional') }}</pre>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Preset Action Modal -->
+    <div v-if="showPresetModal" class="modal-overlay" @click.self="closePresetModal">
+      <div class="modal preset-modal">
+        <div class="modal-header">
+          <h3>{{ isEditingPreset ? i18n('editPreset') : i18n('addPreset') }}</h3>
+          <button class="close-btn" @click="closePresetModal">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label>{{ i18n('presetName') }}</label>
+            <input v-model="presetFormName" :placeholder="i18n('presetNamePlaceholder')" />
+          </div>
+          <div class="form-group">
+            <label>{{ i18n('presetContent') }}</label>
+            <textarea
+              v-model="presetFormContent"
+              :placeholder="i18n('presetContentPlaceholder')"
+              rows="4"
+              class="preset-content-textarea"
+            ></textarea>
+          </div>
+          <div class="preset-modal-actions">
+            <button class="btn btn-outline" @click="closePresetModal">{{ i18n('cancel') }}</button>
+            <button class="btn btn-primary" @click="savePreset" :disabled="!presetFormName.trim() || !presetFormContent.trim()">{{ i18n('save') }}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Data Import Confirm Modal -->
+    <div v-if="showImportConfirmModal" class="modal-overlay" @click.self="cancelImport">
+      <div class="modal confirm-modal">
+        <div class="modal-header">
+          <h3>{{ i18n('confirmImportData') }}</h3>
+          <button class="close-btn" @click="cancelImport">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="confirm-warning">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+              <line x1="12" y1="9" x2="12" y2="13"/>
+              <line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+            <p>{{ i18n('confirmImportDataDesc') }}</p>
+          </div>
+          <div class="confirm-actions">
+            <button class="btn btn-outline" @click="cancelImport">{{ i18n('cancel') }}</button>
+            <button class="btn btn-danger" @click="confirmImport">{{ i18n('confirm') }}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <Transition name="toast-fade">
+      <div v-if="autoSaveMessage" class="auto-save-toast">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <path d="M20 6L9 17l-5-5"/>
+        </svg>
+        <span>{{ autoSaveMessage }}</span>
+      </div>
+    </Transition>
+  </div>
+</template>

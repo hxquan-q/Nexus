@@ -1,0 +1,99 @@
+.icon-btn {
+    background: var(--icon-btn-bg);
+    backdrop-filter: blur(8px);
+    border: 1px solid var(--icon-btn-border);
+    cursor: pointer;
+    color: var(--text-secondary);
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s cubic-bezier(0.25, 0.8, 0.25, 1);
+    padding: 0;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+    pointer-events: auto;
+}
+
+[hidden] {
+    display: none !important;
+}
+
+.icon-btn.small {
+    width: 32px;
+    height: 32px;
+    font-size: 14px;
+}
+
+.icon-btn:hover {
+    background: var(--icon-btn-hover);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.12);
+    border-color: var(--icon-btn-border);
+    color: var(--text-primary);
+}
+
+.icon-btn:active {
+    transform: translateY(0);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.btn-primary,
+.btn-secondary {
+    padding: 8px 16px;
+    border-radius: 18px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    border: none;
+    transition: background 0.2s;
+}
+
+.btn-primary {
+    background: var(--primary);
+    color: var(--on-primary);
+}
+
+.btn-primary:disabled {
+    cursor: default;
+    opacity: 0.82;
+}
+
+.btn-primary:hover {
+    background: var(--primary-hover);
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.12);
+    transform: translateY(-1px);
+}
+
+.btn-secondary {
+    background: transparent;
+    color: var(--primary);
+    border: 1px solid var(--border-color);
+    transition: all 0.2s;
+}
+
+.btn-secondary:hover {
+    background: var(--bg-sidebar);
+    border-color: var(--primary);
+    transform: translateY(-1px);
+}
+
+.btn-primary:disabled:hover {
+    background: var(--primary);
+    box-shadow: none;
+    transform: none;
+}
+
+.empty-list-state {
+    padding: 16px;
+    text-align: center;
+    color: var(--text-tertiary);
+    font-size: 13px;
+}
+
+.clipboard-staging-input {
+    position: fixed;
+    left: -9999px;
+    top: 0;
+}

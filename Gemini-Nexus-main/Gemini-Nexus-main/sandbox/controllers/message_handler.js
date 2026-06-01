@@ -1,0 +1,281 @@
+import { appendContextCompressionNotice } from '../render/context_compression.js';
+import { t } from '../core/i18n.js';
+import {
+    handleCropScreenshotResult,
+    handleGeneratedImageFetchResult,
+    handleImageFetchResult,
+    handleSelectionTextResult,
+} from './message_results.js';
+import { MessageReplyRenderState, renderGeminiReply } from './message_reply_renderer.js';
+import {
+    MessageStreamState,
+    clearActiveStream as clearActiveStreamHelper,
+    createStreamingBubble as createStreamingBubbleHelper,
+    finalizeActiveStream as finalizeActiveStreamHelper,
+    resetStream as resetStreamHelper,
+    restoreStreamForSession as restoreStreamForSessionHelper,
+} from './message_stream_state.js';
+import {
+    handleToolCallStatusMessage as handleToolCallStatusMessageRequest,
+    handleToolOutputMessage as handleToolOutputMessageRequest,
+} from './message_tool_messages.js';
+
+export class MessageHandler {
+    constructor(sessionManager, uiController, imageManager, appController) {
+        this.sessionManager = sessionManager;
+        this.ui = uiController;
+        this.imageManager = imageManager;
+        this.app = appController; // Reference back to app for state like captureMode
+        this.streamingBubble = null;
+        this.contextCompressionNotice = null;
+        this.streamState = new MessageStreamState();
+        this.replyRenderState = new MessageReplyRenderState();
+    }
+
+    async handle(request) {
+        switch (request.action) {
+            case 'MCP_TEST_RESULT':
+                this.handleMcpTestResult(request);
+                return;
+            case 'MCP_TOOLS_RESULT':
+                this.handleMcpToolsResult(request);
+                return;
+            case 'PROVIDER_MODELS_RESULT':
+                this.handleProviderModelsResult(request);
+                return;
+            case 'GEMINI_STREAM_UPDATE':
+                this.handleStreamUpdate(request);
+                return;
+            case 'GEMINI_CONTEXT_STATUS':
+                this.handleContextStatus(request);
+                return;
+            case 'GEMINI_REPLY':
+                this.handleGeminiReply(request);
+                return;
+            case 'TOOL_OUTPUT_MESSAGE':
+                this.handleToolOutputMessage(request);
+                return;
+            case 'TOOL_CALL_STATUS_MESSAGE':
+                this.handleToolCallStatusMessage(request);
+                return;
+            case 'FETCH_IMAGE_RESULT':
+                this.handleImageResult(request);
+                return;
+            case 'SCREEN_CAPTURE_ERROR':
+                this.handleScreenCaptureError(request);
+                return;
+            case 'GENERATED_IMAGE_RESULT':
+                await this.handleGeneratedImageResult(request);
+                return;
+            case 'CROP_SCREENSHOT':
+                await this.handleCropResult(request);
+                return;
+            case 'SELECTION_RESULT':
+                this.handleSelectionResult(request);
+                return;
+            default:
+                return;
+        }
+    }
+
+    handleMcpTestResult(request) {
+        if (typeof this.ui?.settings?.updateMcpTestResult === 'function') {
+            this.ui.settings.updateMcpTestResult(request);
+        }
+    }
+
+    handleMcpToolsResult(request) {
+        if (typeof this.ui?.settings?.updateMcpToolsResult === 'function') {
+            this.ui.settings.updateMcpToolsResult(request);
+        }
+    }
+
+    handleProviderModelsResult(request) {
+        if (typeof this.ui?.settings?.updateProviderModelsResult === 'function') {
+            this.ui.settings.updateProviderModelsResult(request);
+        }
+    }
+
+    handleScreenCaptureError(request) {
+        this.ui.updateStatus(request.error || t('screenCaptureFailed'));
+        setTimeout(() => this.ui.updateStatus(''), 3000);
+    }
+
+    isCurrentSessionMessage(request) {
+        const currentSessionId = this.sessionManager.currentSessionId || null;
+        const messageSessionId = request.sessionId || null;
+        return currentSessionId !== null && messageSessionId === currentSessionId;
+    }
+
+    isGeneratingSessionMessage(request) {
+        const generatingSessionId = this.app.generatingSessionId || null;
+        const messageSessionId = request.sessionId || null;
+        return generatingSessionId !== null && messageSessionId === generatingSessionId;
+    }
+
+    hasPersistedAiReply(session, request) {
+        return this.replyRenderState.hasPersistedAiReply(session, request);
+    }
+
+    markSessionRenderedFromStorage(sessionId, messageCount) {
+        this.replyRenderState.markSessionRenderedFromStorage(sessionId, messageCount);
+    }
+
+    hasStorageRenderedAiReply(session, request) {
+        return this.replyRenderState.hasStorageRenderedAiReply(session, request);
+    }
+
+    getRequestSessionId(request) {
+        return request?.sessionId || null;
+    }
+
+    clearStreamState(sessionId = null) {
+        this.streamState.clear(sessionId);
+    }
+
+    handleStreamUpdate(request) {
+        if (!this.isGeneratingSessionMessage(request)) return;
+        const state = this.streamState.cache(request);
+        const displayText = state?.text || '';
+
+        // Prevent race condition: Ignore stream updates arriving shortly after user cancelled
+        if (this.app.prompt.isCancellationRecent()) {
+            this.clearStreamState(this.getRequestSessionId(request));
+            return;
+        }
+
+        if (!this.isCurrentSessionMessage(request)) return;
+
+        if (!this.streamingBubble) {
+            createStreamingBubbleHelper(this, state);
+        }
+
+        this.streamingBubble.update(displayText, request.thoughts, { isStreaming: true });
+
+        if (!this.app.isGenerating) {
+            this.app.isGenerating = true;
+            this.ui.setLoading(true);
+        }
+    }
+
+    handleContextStatus(request) {
+        if (!this.isGeneratingSessionMessage(request)) return;
+        const state = this.streamState.cache({
+            ...request,
+            contextState: request.state === 'compressing' ? request.state : null,
+        });
+        if (!this.isCurrentSessionMessage(request)) return;
+
+        if (request.state === 'compressing') {
+            if (this.contextCompressionNotice) {
+                this.contextCompressionNotice.dispose?.();
+            }
+            this.contextCompressionNotice = appendContextCompressionNotice(
+                this.ui.historyDiv,
+                t('contextCompressing')
+            );
+            return;
+        }
+
+        if (!this.contextCompressionNotice) return;
+
+        if (request.state === 'compressed') {
+            this.contextCompressionNotice.update(t('contextCompressed'));
+            this.contextCompressionNotice = null;
+            if (state) state.contextState = null;
+            return;
+        }
+
+        if (request.state === 'compression_failed') {
+            this.contextCompressionNotice.update(t('contextCompressionFallback'));
+            this.contextCompressionNotice = null;
+            if (state) state.contextState = null;
+        }
+    }
+
+    handleGeminiReply(request) {
+        if (!this.isGeneratingSessionMessage(request)) return;
+
+        this.app.isGenerating = false;
+        this.app.generatingSessionId = null;
+        this.ui.setLoading(false);
+        this.app.sessionFlow.refreshHistoryUI();
+        this.clearStreamState(this.getRequestSessionId(request));
+
+        if (!this.isCurrentSessionMessage(request)) {
+            this.resetStream();
+            return;
+        }
+
+        const session = this.sessionManager.getCurrentSession();
+        renderGeminiReply(this, session, request);
+    }
+
+    handleToolOutputMessage(request) {
+        return handleToolOutputMessageRequest(this, request);
+    }
+
+    handleToolCallStatusMessage(request) {
+        return handleToolCallStatusMessageRequest(this, request);
+    }
+
+    finalizeActiveStream(state = {}) {
+        finalizeActiveStreamHelper(this, state);
+    }
+
+    getStreamToolCallText(sessionId) {
+        return this.streamState.getToolCallText(sessionId);
+    }
+
+    getStreamRawText(sessionId) {
+        return this.streamState.getRawText(sessionId);
+    }
+
+    getStreamThoughts(sessionId) {
+        return this.streamState.getThoughts(sessionId);
+    }
+
+    getRequestToolCallText(request, sessionId) {
+        return this.streamState.getRequestToolCallText(request, sessionId);
+    }
+
+    handleImageResult(request) {
+        handleImageFetchResult(request, {
+            ui: this.ui,
+            imageManager: this.imageManager,
+        });
+    }
+
+    async handleGeneratedImageResult(request) {
+        await handleGeneratedImageFetchResult(request, {
+            removeWatermark: this.ui?.settings?.generatedImageWatermarkRemovalEnabled !== false,
+        });
+    }
+
+    async handleCropResult(request) {
+        await handleCropScreenshotResult(request, {
+            ui: this.ui,
+            imageManager: this.imageManager,
+            app: this.app,
+        });
+    }
+
+    handleSelectionResult(request) {
+        handleSelectionTextResult(request, { ui: this.ui });
+    }
+
+    // Called by AppController on cancel/switch
+    resetStream(options = {}) {
+        resetStreamHelper(this, options);
+    }
+
+    clearActiveStream() {
+        clearActiveStreamHelper(this);
+    }
+
+    restoreStreamForSession(sessionId) {
+        restoreStreamForSessionHelper(this, sessionId, (session, state) =>
+            this.hasPersistedAiReply(session, state)
+        );
+    }
+}

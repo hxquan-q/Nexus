@@ -1,0 +1,402 @@
+import { CONNECTION_STORAGE_KEYS } from '../../shared/settings/connection.js';
+import {
+    createInitialRestoreMessages,
+    createLocalStorageRestoreMessages,
+} from './state_messages.js';
+
+export function getOwnerTabIdFromLocation(locationLike = window.location) {
+    try {
+        const url = new URL(locationLike.href);
+        const tabId = Number.parseInt(url.searchParams.get('tabId'), 10);
+        return Number.isInteger(tabId) && tabId > 0 ? tabId : null;
+    } catch {
+        return null;
+    }
+}
+
+export function isExtensionHostPageTab(tab) {
+    if (!tab || typeof tab.url !== 'string') return false;
+
+    try {
+        const url = new URL(tab.url);
+        if (url.protocol !== 'chrome-extension:') return false;
+
+        const path = url.pathname.replace(/^\/+/, '');
+        return (
+            path === 'sidepanel/index.html' ||
+            path === 'sandbox/index.html' ||
+            path === 'settings/index.html'
+        );
+    } catch {
+        return false;
+    }
+}
+
+function cacheSidebarExpandedPreference(isExpanded) {
+    localStorage.setItem('geminiSidebarExpanded', isExpanded === false ? 'false' : 'true');
+}
+
+function getRuntimeLastErrorMessage() {
+    return chrome.runtime?.lastError?.message || null;
+}
+
+export class StateManager {
+    constructor(frameManager) {
+        this.frame = frameManager;
+        this.localStorageData = null;
+        this.sessionStorageData = null;
+        this.ownerTabId = getOwnerTabIdFromLocation();
+        this.hostTabId = null;
+        this.currentTabId = this.ownerTabId ?? undefined;
+        this.uiIsReady = false;
+        this.hasInitialized = false;
+    }
+
+    init() {
+        chrome.storage.local.get(
+            [
+                'geminiSessions',
+                'geminiGroups',
+                'pendingSessionId',
+                'pendingMode',
+                'geminiShortcuts',
+                'pendingImage',
+                'geminiSidebarBehavior',
+                'geminiSidebarExpanded',
+                'geminiSidePanelScope',
+                'geminiTextSelectionEnabled',
+                'geminiTextSelectionBlacklist',
+                'geminiImageToolsEnabled',
+                'geminiGeneratedImageWatermarkRemovalEnabled',
+                'geminiAccountIndices',
+                ...CONNECTION_STORAGE_KEYS,
+                'geminiContextMode',
+                'geminiContextRecentTurns',
+            ],
+            (result) => {
+                const errorMessage = getRuntimeLastErrorMessage();
+                if (errorMessage) {
+                    console.warn('Failed to load side panel local state:', errorMessage);
+                    this.localStorageData = {};
+                } else {
+                    this.localStorageData = result || {};
+                }
+                this.trySendInitData();
+            }
+        );
+
+        chrome.storage.session.get(['geminiSidePanelSessionBindings'], (result) => {
+            const errorMessage = getRuntimeLastErrorMessage();
+            if (errorMessage) {
+                console.warn('Failed to load side panel session state:', errorMessage);
+                this.sessionStorageData = { geminiSidePanelSessionBindings: {} };
+            } else {
+                this.sessionStorageData = result || { geminiSidePanelSessionBindings: {} };
+            }
+            this.trySendInitData();
+        });
+
+        if (chrome.tabs && typeof chrome.tabs.getCurrent === 'function') {
+            chrome.tabs.getCurrent((tab) => {
+                if (chrome.runtime?.lastError) return;
+                if (Number.isInteger(tab?.id) && tab.id > 0) {
+                    this.hostTabId = tab.id;
+                }
+            });
+        }
+
+        if (this.hasFixedTabContext()) {
+            this.trySendInitData();
+        } else {
+            chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+                const errorMessage = getRuntimeLastErrorMessage();
+                if (errorMessage) {
+                    console.warn('Failed to resolve active side panel tab:', errorMessage);
+                    this.currentTabId = null;
+                } else {
+                    const tab = tabs && tabs[0] ? tabs[0] : null;
+                    this.currentTabId = this.getContextTabId(tab, null);
+                }
+                this.trySendInitData();
+            });
+        }
+
+        chrome.storage.onChanged.addListener((changes, areaName) => {
+            if (areaName === 'session' && changes.geminiSidePanelSessionBindings) {
+                this.sessionStorageData = {
+                    geminiSidePanelSessionBindings:
+                        changes.geminiSidePanelSessionBindings.newValue || {},
+                };
+                this.postCurrentTabContext();
+                return;
+            }
+
+            if (areaName === 'local') {
+                this.syncLocalStorageChanges(changes);
+            }
+        });
+
+        chrome.tabs.onActivated.addListener(({ tabId }) => {
+            if (this.hasFixedTabContext()) return;
+
+            this.updateCurrentTabFromActivatedTab(tabId);
+        });
+
+        chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+            if (this.currentTabId !== tabId) return;
+            if (!changeInfo?.url && !tab?.url && !changeInfo?.title && !tab?.title) return;
+
+            this.postTabContextMessage(tab);
+        });
+
+        chrome.tabs.onRemoved.addListener((tabId) => {
+            this.removeSessionBinding(tabId);
+
+            if (this.ownerTabId === tabId) {
+                this.currentTabId = null;
+                this.postCurrentTabContext();
+                return;
+            }
+
+            if (this.hasFixedTabContext()) return;
+
+            if (this.currentTabId === tabId) {
+                chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+                    if (getRuntimeLastErrorMessage()) {
+                        this.currentTabId = null;
+                    } else {
+                        const tab = tabs && tabs[0] ? tabs[0] : null;
+                        this.currentTabId = this.getContextTabId(tab, null);
+                    }
+                    this.postCurrentTabContext();
+                });
+            }
+        });
+
+        setTimeout(() => {
+            if (!this.uiIsReady) {
+                console.warn('UI_READY signal timeout, forcing skeleton removal');
+                this.frame.reveal();
+            }
+        }, 1000);
+    }
+
+    markUiReady() {
+        this.uiIsReady = true;
+        this.trySendInitData();
+    }
+
+    trySendInitData() {
+        if (
+            (!this.uiIsReady && !this.hasInitialized) ||
+            !this.localStorageData ||
+            this.sessionStorageData === null ||
+            this.currentTabId === undefined
+        )
+            return;
+
+        this.hasInitialized = true;
+        this.frame.reveal();
+
+        const frameWindow = this.frame.getWindow();
+        if (!frameWindow) return;
+
+        const restoreMessages = createInitialRestoreMessages(this.localStorageData, {
+            theme: localStorage.getItem('geminiTheme') || 'system',
+            language: localStorage.getItem('geminiLanguage') || 'system',
+            appVersion: `v${chrome.runtime.getManifest().version}`,
+        });
+        cacheSidebarExpandedPreference(this.localStorageData.geminiSidebarExpanded);
+
+        restoreMessages.beforeTabContext.forEach((message) => this.frame.postMessage(message));
+        this.postCurrentTabContext();
+        restoreMessages.afterTabContext.forEach((message) => this.frame.postMessage(message));
+
+        // Replay deferred actions captured before the side panel was ready.
+        if (this.localStorageData.pendingSessionId) {
+            this.frame.postMessage({
+                action: 'BACKGROUND_MESSAGE',
+                payload: {
+                    action: 'SWITCH_SESSION',
+                    sessionId: this.localStorageData.pendingSessionId,
+                },
+            });
+            chrome.storage.local.remove('pendingSessionId');
+            delete this.localStorageData.pendingSessionId;
+        }
+
+        if (this.localStorageData.pendingImage) {
+            this.frame.postMessage({
+                action: 'BACKGROUND_MESSAGE',
+                payload: this.localStorageData.pendingImage,
+            });
+            chrome.storage.local.remove('pendingImage');
+            delete this.localStorageData.pendingImage;
+        }
+
+        if (this.localStorageData.pendingMode === 'browser_control') {
+            this.frame.postMessage({
+                action: 'BACKGROUND_MESSAGE',
+                payload: { action: 'ACTIVATE_BROWSER_CONTROL' },
+            });
+            chrome.storage.local.remove('pendingMode');
+            delete this.localStorageData.pendingMode;
+        }
+
+        restoreMessages.afterPendingActions.forEach((message) => this.frame.postMessage(message));
+    }
+
+    syncLocalStorageChanges(changes) {
+        if (!this.localStorageData) return;
+
+        const changedKeys = Object.keys(changes);
+        for (const key of changedKeys) {
+            const newValue = changes[key].newValue;
+            if (newValue === undefined) delete this.localStorageData[key];
+            else this.localStorageData[key] = newValue;
+        }
+
+        if (!this.hasInitialized) return;
+
+        if (Object.prototype.hasOwnProperty.call(changes, 'geminiTheme')) {
+            localStorage.setItem('geminiTheme', this.localStorageData.geminiTheme || 'system');
+        }
+        if (Object.prototype.hasOwnProperty.call(changes, 'geminiLanguage')) {
+            localStorage.setItem(
+                'geminiLanguage',
+                this.localStorageData.geminiLanguage || 'system'
+            );
+        }
+        if (Object.prototype.hasOwnProperty.call(changes, 'geminiSidebarExpanded')) {
+            cacheSidebarExpandedPreference(this.localStorageData.geminiSidebarExpanded);
+        }
+
+        createLocalStorageRestoreMessages(this.localStorageData, changedKeys).forEach((message) =>
+            this.frame.postMessage(message)
+        );
+    }
+
+    updateSessions(sessions) {
+        if (this.localStorageData) this.localStorageData.geminiSessions = sessions;
+    }
+
+    save(key, value) {
+        if (this.localStorageData) this.localStorageData[key] = value;
+
+        const update = {};
+        update[key] = value;
+        chrome.storage.local.set(update);
+
+        if (key === 'geminiTheme') localStorage.setItem('geminiTheme', value);
+        if (key === 'geminiLanguage') localStorage.setItem('geminiLanguage', value);
+        if (key === 'geminiSidebarExpanded') cacheSidebarExpandedPreference(value);
+    }
+
+    getCurrentTabId() {
+        return this.currentTabId;
+    }
+
+    setHostTabId(tabId) {
+        this.hostTabId = Number.isInteger(tabId) && tabId > 0 ? tabId : null;
+    }
+
+    getMessageTargetTabId() {
+        return this.hostTabId || this.currentTabId;
+    }
+
+    getContextTabId(tab, fallback = null) {
+        if (!tab || isExtensionHostPageTab(tab)) return fallback;
+        return Number.isInteger(tab.id) && tab.id > 0 ? tab.id : fallback;
+    }
+
+    updateCurrentTabFromActivatedTab(tabId) {
+        if (!Number.isInteger(tabId) || tabId <= 0) {
+            this.currentTabId = null;
+            this.postCurrentTabContext();
+            return;
+        }
+
+        if (!chrome.tabs || typeof chrome.tabs.get !== 'function') {
+            this.currentTabId = tabId;
+            this.postCurrentTabContext();
+            return;
+        }
+
+        try {
+            chrome.tabs.get(tabId, (tab) => {
+                if (chrome.runtime?.lastError) return;
+                const nextTabId = this.getContextTabId(tab, this.currentTabId ?? null);
+                if (nextTabId === this.currentTabId) return;
+
+                this.currentTabId = nextTabId;
+                this.postCurrentTabContext();
+            });
+        } catch {
+            this.currentTabId = tabId;
+            this.postCurrentTabContext();
+        }
+    }
+
+    hasFixedTabContext() {
+        return Number.isInteger(this.ownerTabId) && this.ownerTabId > 0;
+    }
+
+    getSessionBindings() {
+        return this.sessionStorageData?.geminiSidePanelSessionBindings || {};
+    }
+
+    postTabContextMessage(tab = null) {
+        if (!this.hasInitialized) return;
+        if (!this.frame.getWindow()) return;
+
+        const sessionBindings = this.getSessionBindings();
+        const boundSessionId = this.currentTabId
+            ? sessionBindings[this.currentTabId] || null
+            : null;
+        const tabMatchesCurrent = tab && tab.id === this.currentTabId;
+
+        this.frame.postMessage({
+            action: 'RESTORE_SIDE_PANEL_TAB_CONTEXT',
+            payload: {
+                tabId: this.currentTabId,
+                sessionId: boundSessionId,
+                url: tabMatchesCurrent ? tab.url || '' : '',
+                title: tabMatchesCurrent ? tab.title || '' : '',
+            },
+        });
+    }
+
+    postCurrentTabContext() {
+        this.postTabContextMessage();
+        this.postCurrentTabDetails();
+    }
+
+    postCurrentTabDetails() {
+        if (!Number.isInteger(this.currentTabId) || this.currentTabId <= 0) return;
+        if (!chrome.tabs || typeof chrome.tabs.get !== 'function') return;
+
+        const tabId = this.currentTabId;
+        try {
+            chrome.tabs.get(tabId, (tab) => {
+                if (chrome.runtime?.lastError || !tab) return;
+                if (this.currentTabId !== tabId) return;
+
+                this.postTabContextMessage(tab);
+            });
+        } catch {
+            // Some extension pages or browser states can reject tab detail lookup.
+        }
+    }
+
+    removeSessionBinding(tabId) {
+        if (!Number.isInteger(tabId) || tabId <= 0) return;
+
+        const sessionBindings = this.getSessionBindings();
+        if (!Object.prototype.hasOwnProperty.call(sessionBindings, tabId)) return;
+
+        const nextBindings = { ...sessionBindings };
+        delete nextBindings[tabId];
+        this.sessionStorageData = { geminiSidePanelSessionBindings: nextBindings };
+        chrome.storage.session.set({ geminiSidePanelSessionBindings: nextBindings });
+    }
+}

@@ -1,0 +1,271 @@
+// @vitest-environment jsdom
+
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+    buildArtifactSrcDoc,
+    createLiveArtifactPreview,
+    enhanceLiveArtifacts,
+    getArtifactKind,
+    sanitizeArtifactMarkup,
+    setGraphvizLoaderForTest,
+    setMermaidLoaderForTest,
+} from './artifacts.js';
+import { setLanguagePreference } from '../core/i18n.js';
+
+function createCodeBlock(language, code) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'code-block-wrapper';
+    wrapper.dataset.codeLang = language;
+
+    const pre = document.createElement('pre');
+    const codeElement = document.createElement('code');
+    codeElement.textContent = code;
+    pre.appendChild(codeElement);
+    wrapper.appendChild(pre);
+
+    return wrapper;
+}
+
+function readFrameSrcDoc(frame) {
+    return frame.getAttribute('srcdoc') || frame.srcdoc || '';
+}
+
+async function flushMicrotasks() {
+    for (let index = 0; index < 8; index += 1) {
+        await Promise.resolve();
+    }
+}
+
+describe('Live Artifact previews', () => {
+    afterEach(() => {
+        document.body.innerHTML = '';
+        document.documentElement.removeAttribute('data-theme');
+        setLanguagePreference('en');
+        setGraphvizLoaderForTest();
+        setMermaidLoaderForTest();
+    });
+
+    it('detects previewable artifact languages and common bare diagrams', () => {
+        expect(getArtifactKind('html', '<div>Hello</div>')).toBe('html');
+        expect(getArtifactKind('svg', '<svg viewBox="0 0 1 1"></svg>')).toBe('svg');
+        expect(getArtifactKind('mermaid', 'graph TD\n  A --> B')).toBe('mermaid');
+        expect(getArtifactKind('graphviz', 'digraph G { A -> B; }')).toBe('graphviz');
+        expect(getArtifactKind('dot', 'digraph G { A -> B; }')).toBe('graphviz');
+        expect(getArtifactKind('plaintext', 'sequenceDiagram\n  A->>B: Hi')).toBe('mermaid');
+        expect(getArtifactKind('text', 'digraph G {\n  A -> B;\n}')).toBe('graphviz');
+        expect(getArtifactKind('javascript', 'console.log("no preview")')).toBeNull();
+    });
+
+    it('renders HTML previews in a scriptless iframe with sanitized srcdoc', () => {
+        const root = document.createElement('div');
+        const wrapper = createCodeBlock(
+            'html',
+            [
+                '<button onclick="alert(1)">Run</button>',
+                '<script>alert(2)</script>',
+                '<iframe srcdoc="<script>alert(3)</script>"></iframe>',
+                '<img src="https://example.com/remote.png">',
+                '<img src="data:image/png;base64,AAAA">',
+            ].join('')
+        );
+        root.appendChild(wrapper);
+
+        enhanceLiveArtifacts(root);
+
+        const frame = wrapper.querySelector('iframe.live-artifact-frame');
+        const srcdoc = readFrameSrcDoc(frame);
+
+        expect(frame).not.toBeNull();
+        expect(frame.getAttribute('sandbox')).toBe('');
+        expect(frame.getAttribute('allow')).toBeNull();
+        expect(srcdoc).toContain('<button>Run</button>');
+        expect(srcdoc).toContain('data:image/png;base64,AAAA');
+        expect(srcdoc).not.toContain('<script');
+        expect(srcdoc).not.toContain('onclick');
+        expect(srcdoc).not.toContain('srcdoc=');
+        expect(srcdoc).not.toContain('https://example.com');
+    });
+
+    it('sanitizes SVG previews before embedding them in srcdoc', () => {
+        const srcdoc = buildArtifactSrcDoc(
+            'svg',
+            [
+                '<svg viewBox="0 0 10 10" onclick="alert(1)">',
+                '<script>alert(2)</script>',
+                '<foreignObject><button>bad</button></foreignObject>',
+                '<a href="javascript:alert(3)"><rect width="10" height="10"/></a>',
+                '</svg>',
+            ].join('')
+        );
+
+        expect(srcdoc).toContain('<svg');
+        expect(srcdoc).toContain('<rect');
+        expect(srcdoc).not.toContain('<script');
+        expect(srcdoc).not.toContain('onclick');
+        expect(srcdoc).not.toContain('foreignObject');
+        expect(srcdoc).not.toContain('javascript:');
+    });
+
+    it('enhances Mermaid code blocks with sanitized rendered SVG output', async () => {
+        const root = document.createElement('div');
+        const wrapper = createCodeBlock('mermaid', 'graph TD\n  A --> B');
+        root.appendChild(wrapper);
+        document.body.appendChild(root);
+        const renderMermaid = vi.fn(
+            async () =>
+                '<svg onclick="alert(1)"><script>alert(2)</script><text>Rendered</text></svg>'
+        );
+
+        enhanceLiveArtifacts(root, { renderMermaid });
+        await flushMicrotasks();
+
+        const preview = wrapper.querySelector('.live-artifact-preview');
+        const body = wrapper.querySelector('.live-artifact-body-mermaid');
+
+        expect(renderMermaid).toHaveBeenCalledWith('graph TD\n  A --> B');
+        expect(preview?.dataset.liveArtifactKind).toBe('mermaid');
+        expect(body?.textContent).toContain('Rendered');
+        expect(body?.innerHTML).not.toContain('<script');
+        expect(body?.innerHTML).not.toContain('onclick');
+    });
+
+    it('shows a compact error instead of Mermaid error SVG artwork', async () => {
+        const preview = createLiveArtifactPreview('mermaid', 'graph TD\n  A -->', {
+            renderMermaid: vi.fn(
+                async () =>
+                    '<svg><g class="error-icon"></g><text>Syntax error in text</text><text>mermaid version 10.9.6</text></svg>'
+            ),
+        });
+        document.body.appendChild(preview);
+        await flushMicrotasks();
+
+        const body = preview.querySelector('.live-artifact-body-mermaid');
+
+        expect(body?.classList.contains('live-artifact-body-error')).toBe(true);
+        expect(body?.querySelector('.live-artifact-error')).not.toBeNull();
+        expect(body?.querySelector('svg')).toBeNull();
+        expect(body?.innerHTML).not.toContain('error-icon');
+    });
+
+    it('keeps streaming Mermaid parse failures in the loading state', async () => {
+        const preview = createLiveArtifactPreview('mermaid', 'graph TD\n  A -->', {
+            deferMermaidErrors: true,
+            renderMermaid: vi.fn(async () => {
+                throw new Error('Syntax error in text');
+            }),
+        });
+        document.body.appendChild(preview);
+        await flushMicrotasks();
+
+        const body = preview.querySelector('.live-artifact-body-mermaid');
+
+        expect(body?.classList.contains('live-artifact-body-loading')).toBe(true);
+        expect(body?.classList.contains('live-artifact-body-error')).toBe(false);
+        expect(body?.textContent).toBe('Rendering preview...');
+    });
+
+    it('enhances Graphviz code blocks with sanitized rendered SVG output', async () => {
+        const root = document.createElement('div');
+        const wrapper = createCodeBlock('dot', 'digraph G { A -> B; }');
+        root.appendChild(wrapper);
+        document.body.appendChild(root);
+        const renderGraphviz = vi.fn(
+            async () =>
+                '<svg onclick="alert(1)"><script>alert(2)</script><text>Rendered</text></svg>'
+        );
+
+        enhanceLiveArtifacts(root, { renderGraphviz });
+        await flushMicrotasks();
+
+        const preview = wrapper.querySelector('.live-artifact-preview');
+        const body = wrapper.querySelector('.live-artifact-body-graphviz');
+
+        expect(renderGraphviz).toHaveBeenCalledWith('digraph G { A -> B; }');
+        expect(preview?.dataset.liveArtifactKind).toBe('graphviz');
+        expect(body?.textContent).toContain('Rendered');
+        expect(body?.innerHTML).not.toContain('<script');
+        expect(body?.innerHTML).not.toContain('onclick');
+    });
+
+    it('keeps streaming Graphviz render failures in the loading state', async () => {
+        const preview = createLiveArtifactPreview('graphviz', 'digraph G { A ->', {
+            deferGraphvizErrors: true,
+            renderGraphviz: vi.fn(async () => {
+                throw new Error('syntax error near line 1');
+            }),
+        });
+        document.body.appendChild(preview);
+        await flushMicrotasks();
+
+        const body = preview.querySelector('.live-artifact-body-graphviz');
+
+        expect(body?.classList.contains('live-artifact-body-loading')).toBe(true);
+        expect(body?.classList.contains('live-artifact-body-error')).toBe(false);
+        expect(body?.textContent).toBe('Rendering preview...');
+    });
+
+    it('can use an injected Graphviz loader for the default renderer', async () => {
+        const renderSVGElement = vi.fn((source) => {
+            const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            svg.innerHTML = '<text>Loaded</text>';
+            return svg;
+        });
+
+        setGraphvizLoaderForTest(async () => ({
+            instance: async () => ({ renderSVGElement }),
+        }));
+
+        const preview = createLiveArtifactPreview('graphviz', 'digraph G { A -> B; }');
+        document.body.appendChild(preview);
+        await flushMicrotasks();
+
+        expect(renderSVGElement).toHaveBeenCalledWith(expect.stringContaining('rankdir="LR";'));
+        expect(renderSVGElement).toHaveBeenCalledWith(
+            expect.stringContaining('graph [bgcolor="transparent" fontcolor="#374151" margin="0"];')
+        );
+        expect(preview.textContent).toContain('Loaded');
+    });
+
+    it('does not duplicate previews when the same node is enhanced again', () => {
+        const wrapper = createCodeBlock('svg', '<svg viewBox="0 0 1 1"></svg>');
+
+        enhanceLiveArtifacts(wrapper);
+        enhanceLiveArtifacts(wrapper);
+
+        expect(wrapper.querySelectorAll('.live-artifact-preview')).toHaveLength(1);
+    });
+
+    it('can use an injected Mermaid loader for the default renderer', async () => {
+        const initialize = vi.fn();
+        setMermaidLoaderForTest(async () => ({
+            default: {
+                initialize,
+                parse: vi.fn(async () => true),
+                render: vi.fn(async () => ({ svg: '<svg><text>Loaded</text></svg>' })),
+            },
+        }));
+
+        const preview = createLiveArtifactPreview('mermaid', 'graph TD\n  A --> B');
+        document.body.appendChild(preview);
+        await flushMicrotasks();
+
+        expect(initialize).toHaveBeenCalledWith(
+            expect.objectContaining({
+                flowchart: expect.objectContaining({ htmlLabels: false, useMaxWidth: true }),
+            })
+        );
+        expect(preview.textContent).toContain('Loaded');
+    });
+
+    it('keeps sanitizer usable without DOM APIs', () => {
+        const originalDocument = globalThis.document;
+
+        try {
+            Reflect.deleteProperty(globalThis, 'document');
+
+            expect(sanitizeArtifactMarkup('<b>x</b>', 'html')).toBe('&lt;b&gt;x&lt;/b&gt;');
+        } finally {
+            globalThis.document = originalDocument;
+        }
+    });
+});
