@@ -44,12 +44,23 @@ function getUserMessageDisplayContent(message: ChatMessage): string {
 
 function getFileIcon(format: string): string {
   switch (format) {
-    case 'pdf': return '\u{1F4D1}';
-    case 'docx': return '\u{1F4C4}';
-    case 'csv': return '\u{1F4CA}';
-    case 'md': return '\u{1F4DD}';
-    case 'txt': return '\u{1F4C3}';
-    default: return '\u{1F4CE}';
+    case 'pdf': return 'PDF';
+    case 'docx': return 'DOC';
+    case 'csv': return 'CSV';
+    case 'md': return 'MD';
+    case 'txt': return 'TXT';
+    default: return 'FILE';
+  }
+}
+
+function getFileBadgeColor(format: string): string {
+  switch (format) {
+    case 'pdf': return '#ff3b30';
+    case 'docx': return '#007aff';
+    case 'csv': return '#34c759';
+    case 'md': return '#af52de';
+    case 'txt': return '#8e8e93';
+    default: return '#8e8e93';
   }
 }
 
@@ -147,7 +158,7 @@ const isUser = computed(() => props.message.role === 'user');
           <!-- File attachments -->
           <div v-if="message.fileAttachments && message.fileAttachments.length" class="message-files">
             <div v-for="file in message.fileAttachments" :key="file.id" class="message-file-chip">
-              <span class="message-file-icon">{{ getFileIcon(file.format) }}</span>
+              <span class="message-file-badge" :style="{ background: getFileBadgeColor(file.format) + '18', color: getFileBadgeColor(file.format) }">{{ getFileIcon(file.format) }}</span>
               <span class="message-file-name">{{ file.name }}</span>
             </div>
           </div>
@@ -477,6 +488,18 @@ const isUser = computed(() => props.message.role === 'user');
 
 .message-file-icon {
   font-size: 14px;
+  line-height: 1;
+}
+
+.message-file-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
   line-height: 1;
 }
 

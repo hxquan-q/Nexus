@@ -211,7 +211,31 @@ export async function searchSessions(query: string): Promise<ChatSession[]> {
 }
 
 export async function generateSessionTitle(firstMessage: string): Promise<string> {
-  const maxLen = 30;
-  const title = firstMessage.replace(/\n/g, ' ').trim();
-  return title.length > maxLen ? title.substring(0, maxLen) + '...' : title;
+  let title = firstMessage.replace(/\n/g, ' ').trim();
+
+  // Strip code blocks
+  title = title.replace(/```[\s\S]*?```/g, '');
+  // Strip inline code
+  title = title.replace(/`[^`]+`/g, '');
+  // Strip markdown formatting (bold, italic, strikethrough, links)
+  title = title.replace(/\*\*([^*]+)\*\*/g, '$1');
+  title = title.replace(/\*([^*]+)\*/g, '$1');
+  title = title.replace(/~~([^~]+)~~/g, '$1');
+  title = title.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+  // Strip URLs (replace with "Link")
+  title = title.replace(/https?:\/\/[^\s)\]>]+/g, 'Link');
+  // Strip markdown headers
+  title = title.replace(/^#{1,6}\s+/gm, '');
+  // Strip file attachment separators
+  title = title.replace(/\n---\n/g, ' ');
+  // Strip [Shared Page Content] and [File: ...] prefixes
+  title = title.replace(/\[(?:Shared Page Content|File:[^\]]*)\]\s*/g, '');
+  // Collapse whitespace
+  title = title.replace(/\s+/g, ' ').trim();
+
+  const maxLen = 50;
+  if (title.length === 0) {
+    return 'New Chat';
+  }
+  return title.length > maxLen ? title.substring(0, maxLen).trim() + '...' : title;
 }

@@ -173,6 +173,7 @@ defineExpose({ toggle, close, isOpen });
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  max-width: 120px;
 }
 
 .model-selector-dropdown {
@@ -180,7 +181,8 @@ defineExpose({ toggle, close, isOpen });
   top: calc(100% + 4px);
   left: 50%;
   transform: translateX(-50%);
-  min-width: 300px;
+  min-width: 240px;
+  max-width: 320px;
   max-height: 380px;
   background: var(--color-bg-primary);
   border: 1px solid var(--color-border);

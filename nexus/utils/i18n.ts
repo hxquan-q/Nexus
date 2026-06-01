@@ -315,6 +315,31 @@ const translations: Record<Language, Record<TranslationKey, string>> = {
 
     // ===== Content Scripts: Floating Ball =====
     'floatingBall.openNexus': 'Open Nexus',
+
+    // ===== Quick Actions =====
+    'quickActions.summarizePage': 'Summarize this page',
+    'quickActions.translate': 'Translate text',
+    'quickActions.helpWrite': 'Help me write',
+    'quickActions.analyzeImage': 'Analyze image',
+    'quickActions.explainCode': 'Explain code',
+    'quickActions.askAnything': 'Ask anything',
+
+    // ===== Context Action Cards =====
+    'context.summarizePage': 'Summarize Page',
+    'context.summarizePageDesc': 'Get a quick summary of the current webpage',
+    'context.analyzeImage': 'Analyze Image',
+    'context.analyzeImageDesc': 'Upload or paste an image for AI vision',
+    'context.helpWrite': 'Help Me Write',
+    'context.helpWriteDesc': 'Draft emails, documents, posts with AI',
+    'context.askAnything': 'Ask Anything',
+    'context.askAnythingDesc': 'Ask any question to get help',
+
+    // ===== Drag & Drop =====
+    'dropzone.title': 'Drop file here',
+
+    // ===== Appearance: Sound =====
+    'appearance.soundEffects': 'Sound Effects',
+    'appearance.soundEffectsDesc': 'Play subtle sounds on send and receive',
   },
 
   'zh-CN': {
@@ -623,6 +648,31 @@ const translations: Record<Language, Record<TranslationKey, string>> = {
 
     // ===== Content Scripts: Floating Ball =====
     'floatingBall.openNexus': '打开 Nexus',
+
+    // ===== Quick Actions =====
+    'quickActions.summarizePage': '总结当前页面',
+    'quickActions.translate': '翻译文本',
+    'quickActions.helpWrite': '帮我写',
+    'quickActions.analyzeImage': '分析图片',
+    'quickActions.explainCode': '解释代码',
+    'quickActions.askAnything': '随便问问',
+
+    // ===== Context Action Cards =====
+    'context.summarizePage': '总结页面',
+    'context.summarizePageDesc': '快速总结当前网页内容',
+    'context.analyzeImage': '分析图片',
+    'context.analyzeImageDesc': '上传或粘贴图片让 AI 分析',
+    'context.helpWrite': '帮我写',
+    'context.helpWriteDesc': '用 AI 起草邮件、文档、帖子',
+    'context.askAnything': '随便问',
+    'context.askAnythingDesc': '问任何问题获取帮助',
+
+    // ===== Drag & Drop =====
+    'dropzone.title': '拖放文件到这里',
+
+    // ===== Appearance: Sound =====
+    'appearance.soundEffects': '音效',
+    'appearance.soundEffectsDesc': '发送和接收时播放提示音',
   },
 };
 

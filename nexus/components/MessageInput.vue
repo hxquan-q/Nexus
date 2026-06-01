@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { ref, watch, nextTick } from 'vue';
+import { ref, watch, nextTick, computed } from 'vue';
 import type { ChatImage, ChatFileAttachment } from '../utils/providers/types';
 import type { Language } from '../utils/i18n';
 import { t as i18n } from '../utils/i18n';
-import { parseFile, detectFormat } from '../utils/fileParser';
+import { detectFormat } from '../utils/fileParser';
 
 const props = defineProps<{
   language: Language;
@@ -15,6 +15,9 @@ const props = defineProps<{
   sharePageEnabled: boolean;
   sharePageTitle: string;
   sharePageLoading: boolean;
+  presetActions: { id: string; name: string; content: string }[];
+  isChatEmpty: boolean;
+  soundEnabled: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -27,6 +30,7 @@ const emit = defineEmits<{
   (e: 'add-files', files: File[]): void;
   (e: 'toggle-share-page'): void;
   (e: 'open-file-picker'): void;
+  (e: 'open-image-picker'): void;
   (e: 'paste', event: ClipboardEvent): void;
   (e: 'keydown', event: KeyboardEvent): void;
   (e: 'composition-start'): void;
@@ -35,12 +39,29 @@ const emit = defineEmits<{
   (e: 'drag-over', event: DragEvent): void;
   (e: 'drag-leave', event: DragEvent): void;
   (e: 'drop', event: DragEvent): void;
+  (e: 'fill-input', text: string): void;
+  (e: 'action-summarize-page'): void;
+  (e: 'action-analyze-image'): void;
+  (e: 'action-help-write'): void;
+  (e: 'action-ask-anything'): void;
 }>();
 
 const textareaRef = ref<HTMLTextAreaElement | null>(null);
 const isInputComposing = ref(false);
 const isImageDragActive = ref(false);
 const text = ref('');
+const expandedPresets = ref(false);
+
+const visiblePresets = computed(() => {
+  if (props.isChatEmpty || expandedPresets.value) {
+    return props.presetActions;
+  }
+  return props.presetActions.slice(0, 3);
+});
+
+const showExpandButton = computed(() => {
+  return !props.isChatEmpty && props.presetActions.length > 3 && !expandedPresets.value;
+});
 
 watch(text, () => {
   nextTick(autoResizeTextarea);
@@ -104,15 +125,23 @@ function handleDrop(event: DragEvent) {
   emit('drop', event);
 }
 
-function getFileIcon(format: string): string {
+function getFileBadge(format: string): { label: string; color: string } {
   switch (format) {
-    case 'pdf': return '\u{1F4D1}';
-    case 'docx': return '\u{1F4C4}';
-    case 'csv': return '\u{1F4CA}';
-    case 'md': return '\u{1F4DD}';
-    case 'txt': return '\u{1F4C3}';
-    default: return '\u{1F4CE}';
+    case 'pdf': return { label: 'PDF', color: '#ff3b30' };
+    case 'docx': return { label: 'DOC', color: '#007aff' };
+    case 'csv': return { label: 'CSV', color: '#34c759' };
+    case 'md': return { label: 'MD', color: '#af52de' };
+    case 'txt': return { label: 'TXT', color: '#8e8e93' };
+    default: return { label: 'FILE', color: '#8e8e93' };
   }
+}
+
+function handlePresetClick(content: string) {
+  emit('fill-input', content);
+}
+
+function handleExpandPresets() {
+  expandedPresets.value = true;
 }
 
 const totalPendingAttachments = ref(0);
@@ -134,6 +163,33 @@ defineExpose({ textareaRef, text, focus: () => textareaRef.value?.focus() });
 
 <template>
   <div class="input-area" :class="{ 'drag-active': isImageDragActive }">
+    <!-- Drag overlay -->
+    <Transition name="drop-zone">
+      <div v-if="isImageDragActive" class="drop-zone-overlay">
+        <div class="drop-zone-content">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" stroke-width="1.5">
+            <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/>
+          </svg>
+          <span class="drop-zone-text">{{ i18n(language, 'dropzone.title') }}</span>
+        </div>
+      </div>
+    </Transition>
+
+    <!-- Quick actions bar -->
+    <div v-if="presetActions.length > 0 && hasActiveProvider" class="quick-actions">
+      <button
+        v-for="preset in visiblePresets"
+        :key="preset.id"
+        class="quick-action-pill"
+        @click="handlePresetClick(preset.content)"
+      >
+        {{ preset.name }}
+      </button>
+      <button v-if="showExpandButton" class="quick-action-pill quick-action-expand" @click="handleExpandPresets">
+        ...
+      </button>
+    </div>
+
     <!-- Pending attachments -->
     <div v-if="pendingImages.length > 0 || pendingFiles.length > 0" class="pending-attachments">
       <!-- Pending images -->
@@ -143,7 +199,7 @@ defineExpose({ textareaRef, text, focus: () => textareaRef.value?.focus() });
       </div>
       <!-- Pending file attachments -->
       <div v-for="file in pendingFiles" :key="file.id" class="pending-file-chip">
-        <span class="pending-file-icon">{{ getFileIcon(file.format) }}</span>
+        <span class="pending-file-badge" :style="{ background: getFileBadge(file.format).color + '18', color: getFileBadge(file.format).color }">{{ getFileBadge(file.format).label }}</span>
         <span class="pending-file-name">{{ file.name }}</span>
         <button class="pending-file-remove" @click="emit('remove-file', file.id)">&times;</button>
       </div>
@@ -229,11 +285,102 @@ defineExpose({ textareaRef, text, focus: () => textareaRef.value?.focus() });
   border-top: 1px solid var(--color-border);
   background: var(--color-bg-primary);
   transition: background var(--transition-fast), border-color var(--transition-fast);
+  position: relative;
 }
 
 .input-area.drag-active {
   background: var(--color-bg-secondary);
   border-color: var(--color-accent);
+}
+
+/* Drop zone overlay */
+.drop-zone-overlay {
+  position: absolute;
+  inset: 0;
+  background: var(--color-bg-primary);
+  opacity: 0.95;
+  border: 2px dashed var(--color-accent);
+  border-radius: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  pointer-events: none;
+}
+
+.drop-zone-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-sm);
+  animation: drop-zone-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes drop-zone-pulse {
+  0%, 100% { opacity: 0.8; }
+  50% { opacity: 1; }
+}
+
+.drop-zone-text {
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--color-accent);
+}
+
+.drop-zone-enter-active {
+  animation: drop-zone-fade-in 150ms ease;
+}
+
+.drop-zone-leave-active {
+  animation: drop-zone-fade-in 150ms ease reverse;
+}
+
+@keyframes drop-zone-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Quick actions bar */
+.quick-actions {
+  display: flex;
+  gap: var(--spacing-xs);
+  padding-bottom: var(--spacing-sm);
+  overflow-x: auto;
+  white-space: nowrap;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.quick-actions::-webkit-scrollbar {
+  display: none;
+}
+
+.quick-action-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  cursor: pointer;
+  font-family: var(--font-body);
+  transition: all var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.quick-action-pill:hover {
+  background: rgba(0, 122, 255, 0.08);
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+  transform: translateY(-1px);
+}
+
+.quick-action-expand {
+  font-weight: 600;
+  letter-spacing: 1px;
 }
 
 .pending-attachments {
@@ -288,8 +435,15 @@ defineExpose({ textareaRef, text, focus: () => textareaRef.value?.focus() });
   max-width: 180px;
 }
 
-.pending-file-icon {
-  font-size: 14px;
+.pending-file-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
   line-height: 1;
   flex-shrink: 0;
 }
@@ -407,6 +561,8 @@ defineExpose({ textareaRef, text, focus: () => textareaRef.value?.focus() });
   max-height: 156px;
   line-height: 22px;
   transition: border-color var(--transition-fast);
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .input-textarea:focus {

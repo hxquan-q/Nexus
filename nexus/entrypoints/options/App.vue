@@ -363,6 +363,7 @@ function removeModel(model: string) {
 const fontScale = ref(1.0);
 const floatingBallEnabled = ref(true);
 const selectionQuoteEnabled = ref(true);
+const soundEffectsEnabled = ref(false);
 
 async function changeFontScale() {
   await setFontScale(fontScale.value);
@@ -374,6 +375,11 @@ async function changeFloatingBall() {
 
 async function changeSelectionQuote() {
   await setSelectionQuoteEnabled(selectionQuoteEnabled.value);
+}
+
+async function changeSoundEffects() {
+  const { setSoundEffects } = await import('../../utils/storage');
+  await setSoundEffects(soundEffectsEnabled.value);
 }
 
 // ============================================================
@@ -792,6 +798,8 @@ onMounted(async () => {
   fontScale.value = await getFontScale();
   floatingBallEnabled.value = await getFloatingBallEnabled();
   selectionQuoteEnabled.value = await getSelectionQuoteEnabled();
+  const { getSoundEffects } = await import('../../utils/storage');
+  soundEffectsEnabled.value = await getSoundEffects();
 
   // AI settings
   pageContentMaxLength.value = await getPageContentMaxLength();
@@ -1053,6 +1061,14 @@ onMounted(async () => {
           <label class="toggle-label">
             <input type="checkbox" v-model="selectionQuoteEnabled" @change="changeSelectionQuote" />
             <span>{{ i18n(currentLanguage, 'appearance.selectionQuoteDesc') }}</span>
+          </label>
+        </div>
+
+        <div class="settings-section">
+          <h3>{{ i18n(currentLanguage, 'appearance.soundEffects') }}</h3>
+          <label class="toggle-label">
+            <input type="checkbox" v-model="soundEffectsEnabled" @change="changeSoundEffects" />
+            <span>{{ i18n(currentLanguage, 'appearance.soundEffectsDesc') }}</span>
           </label>
         </div>
       </div>

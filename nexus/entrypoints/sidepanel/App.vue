@@ -44,6 +44,8 @@ import { executeScript, setScriptConfirmCallback, type ScriptConfirmationRequest
 import { estimateMessagesTokens } from '../../utils/tokenCount';
 import { getAllTemplates, type ChatTemplate } from '../../utils/templates';
 import { useStreamChat } from '../../composables/useStreamChat';
+import { getPresetActions, type PresetAction, getSoundEffects, watchSoundEffects } from '../../utils/storage';
+import { playSentSound, playReceivedSound, playErrorSound } from '../../utils/sounds';
 
 // Extracted components
 import ChatMessage from '../../components/ChatMessage.vue';
@@ -179,6 +181,21 @@ const confirmationDialog = ref<{
 // Templates state
 const chatTemplates = ref<ChatTemplate[]>([]);
 
+// Preset actions state
+const presetActions = ref<PresetAction[]>([]);
+const defaultPresetActions: PresetAction[] = [
+  { id: 'default-summarize-page', name: 'Summarize this page', content: 'Please summarize the current page.' },
+  { id: 'default-translate', name: 'Translate text', content: 'Please translate the following text to ' },
+  { id: 'default-help-write', name: 'Help me write', content: 'Help me write: ' },
+  { id: 'default-analyze-image', name: 'Analyze image', content: 'What is in this image?' },
+  { id: 'default-explain-code', name: 'Explain code', content: 'Please explain this code: ' },
+  { id: 'default-ask-anything', name: 'Ask anything', content: '' },
+];
+
+// Sound effects state
+const soundEffectsEnabled = ref(false);
+const unwatchSoundEffects = ref<(() => void) | null>(null);
+
 // Context window state
 const contextUsagePercent = ref(0);
 const contextTokenEstimate = ref(0);
@@ -254,6 +271,11 @@ function updateContextUsage() {
   }
   contextTokenEstimate.value = estimateMessagesTokens(messages.value as { content: string }[]);
   contextUsagePercent.value = Math.min(100, Math.round((contextTokenEstimate.value / contextTokenMax.value) * 100));
+}
+
+function getEffectivePresets(): PresetAction[] {
+  if (presetActions.value.length > 0) return presetActions.value;
+  return defaultPresetActions;
 }
 
 function openLightbox(dataUrl: string) {
@@ -429,6 +451,7 @@ async function sendWithExistingMessages(): Promise<void> {
           timestamp: Date.now(),
         });
         triggerRef(messages);
+        if (soundEffectsEnabled.value) playErrorSound();
       },
       onAborted: () => {},
     });
@@ -1126,6 +1149,8 @@ async function sendMessage() {
   pendingFiles.value = [];
   scrollToBottom();
 
+  if (soundEffectsEnabled.value) playSentSound();
+
   if (messages.value.length === 1) {
     currentSession.value.title = await generateSessionTitle(text || (hasImages ? 'Image' : (hasFiles ? 'File' : 'Chat')));
   }
@@ -1155,6 +1180,7 @@ async function sendMessage() {
           timestamp: Date.now(),
         });
         triggerRef(messages);
+        if (soundEffectsEnabled.value) playErrorSound();
       },
       onAborted: () => {},
     });
@@ -1170,6 +1196,7 @@ async function sendMessage() {
     await saveCurrentSession();
     updateContextUsage();
     scrollToBottom();
+    if (soundEffectsEnabled.value) playReceivedSound();
   }
 }
 
@@ -1343,6 +1370,80 @@ async function handleImportSession(event: Event) {
     showToast(i18n(currentLanguage.value, 'data.importFailed', { error: error instanceof Error ? error.message : 'Unknown error' }), 3000);
   } finally {
     input.value = '';
+  }
+}
+
+// ============================================================
+// Quick action fill / context cards
+// ============================================================
+
+function handleFillInput(text: string): void {
+  if (!text) {
+    messageInputRef.value?.focus();
+    return;
+  }
+  inputText.value = text;
+  if (messageInputRef.value) {
+    messageInputRef.value.text = text;
+  }
+  nextTick(() => {
+    messageInputRef.value?.focus();
+  });
+}
+
+async function handleContextAction(action: string): Promise<void> {
+  switch (action) {
+    case 'summarize-page': {
+      sharePageContentEnabled.value = true;
+      const tab = await getActiveTab();
+      if (tab) {
+        sharePageContentTitle.value = tab.title || '';
+      }
+      inputText.value = 'Please summarize this page.';
+      if (messageInputRef.value) {
+        messageInputRef.value.text = inputText.value;
+      }
+      nextTick(() => {
+        sendMessage();
+      });
+      break;
+    }
+    case 'analyze-image': {
+      // Trigger image file picker
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/*';
+      input.multiple = false;
+      input.onchange = async () => {
+        if (!input.files?.length) return;
+        await addPendingImageFiles(Array.from(input.files));
+        inputText.value = 'What is in this image?';
+        if (messageInputRef.value) {
+          messageInputRef.value.text = inputText.value;
+        }
+        nextTick(() => {
+          messageInputRef.value?.focus();
+        });
+      };
+      input.click();
+      break;
+    }
+    case 'help-write': {
+      inputText.value = 'Help me write: ';
+      if (messageInputRef.value) {
+        messageInputRef.value.text = inputText.value;
+      }
+      nextTick(() => {
+        messageInputRef.value?.focus();
+      });
+      break;
+    }
+    case 'ask-anything': {
+      nextTick(() => {
+        messageInputRef.value?.focus();
+      });
+      break;
+    }
   }
 }
 
@@ -1562,6 +1663,7 @@ async function handleContentImageMessage(imageUrl: string, prompt: string): Prom
           timestamp: Date.now(),
         });
         triggerRef(messages);
+        if (soundEffectsEnabled.value) playErrorSound();
       },
       onAborted: () => {},
     });
@@ -1674,6 +1776,16 @@ onMounted(async () => {
 
   // Load templates
   chatTemplates.value = await getAllTemplates();
+
+  // Load preset actions
+  presetActions.value = await getPresetActions();
+
+  // Load sound effects setting
+  soundEffectsEnabled.value = await getSoundEffects();
+
+  unwatchSoundEffects.value = watchSoundEffects((enabled) => {
+    soundEffectsEnabled.value = enabled;
+  });
 });
 
 onUnmounted(() => {
@@ -1694,6 +1806,7 @@ onUnmounted(() => {
   unwatchThemeMode.value?.();
   unwatchSelectionQuoteEnabled.value?.();
   unwatchMcpServers.value?.();
+  unwatchSoundEffects.value?.();
   systemThemeMediaQuery.value?.removeEventListener('change', handleSystemThemeChange);
   mcpManager.disconnectAll().catch(() => {});
   if (markdownActionClickHandler) document.removeEventListener('click', markdownActionClickHandler);
@@ -1798,6 +1911,64 @@ onUnmounted(() => {
               <polyline points="9 18 15 12 9 6"/>
             </svg>
           </button>
+
+          <!-- Context action cards (shown when provider is configured) -->
+          <div v-if="activeProvider" class="context-cards">
+            <button class="context-card" @click="handleContextAction('summarize-page')">
+              <div class="context-card-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+                  <polyline points="14 2 14 8 20 8"/>
+                  <line x1="16" y1="13" x2="8" y2="13"/>
+                  <line x1="16" y1="17" x2="8" y2="17"/>
+                  <polyline points="10 9 9 9 8 9"/>
+                </svg>
+              </div>
+              <div class="context-card-text">
+                <span class="context-card-title">{{ i18n(currentLanguage, 'context.summarizePage') }}</span>
+                <span class="context-card-desc">{{ i18n(currentLanguage, 'context.summarizePageDesc') }}</span>
+              </div>
+            </button>
+            <button class="context-card" @click="handleContextAction('analyze-image')">
+              <div class="context-card-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                  <circle cx="8.5" cy="8.5" r="1.5"/>
+                  <polyline points="21 15 16 10 5 21"/>
+                </svg>
+              </div>
+              <div class="context-card-text">
+                <span class="context-card-title">{{ i18n(currentLanguage, 'context.analyzeImage') }}</span>
+                <span class="context-card-desc">{{ i18n(currentLanguage, 'context.analyzeImageDesc') }}</span>
+              </div>
+            </button>
+            <button class="context-card" @click="handleContextAction('help-write')">
+              <div class="context-card-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
+                  <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                </svg>
+              </div>
+              <div class="context-card-text">
+                <span class="context-card-title">{{ i18n(currentLanguage, 'context.helpWrite') }}</span>
+                <span class="context-card-desc">{{ i18n(currentLanguage, 'context.helpWriteDesc') }}</span>
+              </div>
+            </button>
+            <button class="context-card" @click="handleContextAction('ask-anything')">
+              <div class="context-card-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <circle cx="12" cy="12" r="10"/>
+                  <path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3"/>
+                  <line x1="12" y1="17" x2="12.01" y2="17"/>
+                </svg>
+              </div>
+              <div class="context-card-text">
+                <span class="context-card-title">{{ i18n(currentLanguage, 'context.askAnything') }}</span>
+                <span class="context-card-desc">{{ i18n(currentLanguage, 'context.askAnythingDesc') }}</span>
+              </div>
+            </button>
+          </div>
+
           <!-- Template cards -->
           <div v-if="activeProvider && chatTemplates.length > 0" class="template-cards">
             <button
@@ -1895,6 +2066,9 @@ onUnmounted(() => {
       :share-page-enabled="sharePageContentEnabled"
       :share-page-title="sharePageContentTitle"
       :share-page-loading="sharePageContentLoading"
+      :preset-actions="getEffectivePresets()"
+      :is-chat-empty="messages.length === 0"
+      :sound-enabled="soundEffectsEnabled"
       @send="sendMessage"
       @stop="terminateCurrentGeneration"
       @update:text="inputText = $event"
@@ -1904,6 +2078,7 @@ onUnmounted(() => {
       @open-file-picker="openFilePicker"
       @paste="handleInputPaste"
       @drop="handleInputDrop"
+      @fill-input="handleFillInput"
     />
 
     <!-- History panel -->
@@ -2170,6 +2345,75 @@ onUnmounted(() => {
   font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
   opacity: 0.7;
+}
+
+/* Context action cards */
+.context-cards {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-lg);
+  max-width: 380px;
+  width: 100%;
+}
+
+.context-card {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--font-body);
+  transition: all var(--transition-fast);
+}
+
+.context-card:hover {
+  border-color: var(--color-accent);
+  background: rgba(0, 122, 255, 0.05);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+
+.context-card-icon {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  background: rgba(0, 122, 255, 0.08);
+  color: var(--color-accent);
+}
+
+.context-card-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.context-card-title {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.context-card-desc {
+  font-size: 10px;
+  color: var(--color-text-secondary);
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 /* Template cards */
@@ -2565,6 +2809,35 @@ onUnmounted(() => {
 @keyframes toast-out {
   from { opacity: 1; }
   to { opacity: 0; }
+}
+
+/* Responsive fixes for narrow sidepanel (as low as 280px) */
+.sidepanel .chat-area {
+  padding: var(--spacing-sm);
+}
+
+.sidepanel :deep(.message-bubble) {
+  max-width: 90%;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.sidepanel :deep(.model-selector-btn .model-name) {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Narrow panel context cards */
+@media (max-width: 340px) {
+  .context-cards {
+    grid-template-columns: 1fr;
+  }
+
+  .header-center {
+    min-width: 0;
+  }
 }
 
 /* Theme transition on root variables */

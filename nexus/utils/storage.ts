@@ -338,6 +338,28 @@ export function getDefaultShortcuts(): ShortcutBinding[] {
 }
 
 // ============================================================
+// Sound effects
+// ============================================================
+
+const soundEffectsStorage = storage.defineItem<boolean>('local:soundEffects', {
+  fallback: false,
+});
+
+export async function getSoundEffects(): Promise<boolean> {
+  return await soundEffectsStorage.getValue();
+}
+
+export async function setSoundEffects(enabled: boolean): Promise<void> {
+  await soundEffectsStorage.setValue(enabled);
+}
+
+export function watchSoundEffects(callback: (enabled: boolean) => void): () => void {
+  return soundEffectsStorage.watch((newValue) => {
+    callback(newValue);
+  });
+}
+
+// ============================================================
 // Helper: convert StoredProvider to AIProvider for API layer
 // ============================================================
 
