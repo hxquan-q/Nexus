@@ -5,7 +5,7 @@ export default defineConfig({
   manifest: {
     name: 'Nexus',
     description: 'AI-Powered Browser Assistant',
-    version: '0.2.1',
+    version: '0.2.2',
     minimum_chrome_version: '120',
     permissions: [
       'storage',
@@ -40,7 +40,7 @@ export default defineConfig({
     },
     web_accessible_resources: [
       {
-        resources: ['sandbox/index.html', 'sandbox.html'],
+        resources: ['sandbox.html'],
         matches: ['<all_urls>'],
       },
     ],

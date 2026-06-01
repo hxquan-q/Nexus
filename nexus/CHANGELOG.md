@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.2] - 2026-06-02
+
+### Changed
+- Final build verification: confirmed all output files present and valid
+- Fixed web_accessible_resources to remove stale sandbox/index.html reference
+- Version sync across package.json, wxt.config.ts, options page, and history panel
+
 ## [0.2.1] - 2026-06-02
 
 ### Changed
