@@ -319,6 +319,25 @@ function updateBaseUrlFromType() {
   formProvider.value.baseUrl = typeBaseUrls[formProvider.value.type] || '';
 }
 
+function detectProviderTypeFromUrl(url: string): ProviderType {
+  const lower = url.toLowerCase();
+  if (lower.includes('openai.com')) return 'openai';
+  if (lower.includes('anthropic.com')) return 'anthropic';
+  if (lower.includes('generativelanguage.googleapis.com') || lower.includes('gemini')) return 'gemini';
+  if (lower.includes('deepseek.com')) return 'deepseek';
+  if (lower.includes('openrouter.ai')) return 'openrouter';
+  if (lower.includes('dashscope') || lower.includes('qwen')) return 'qwen';
+  if (lower.includes('bigmodel.cn')) return 'zhipu';
+  return 'custom';
+}
+
+function handleBaseUrlInput() {
+  const detected = detectProviderTypeFromUrl(formProvider.value.baseUrl);
+  if (detected !== 'custom') {
+    formProvider.value.type = detected;
+  }
+}
+
 function toggleModelVision(model: string) {
   const idx = formProvider.value.visionModels.indexOf(model);
   if (idx >= 0) {
@@ -950,7 +969,7 @@ onMounted(async () => {
 
             <div class="form-group">
               <label>{{ i18n(currentLanguage, 'providers.baseUrl') }}</label>
-              <input v-model="formProvider.baseUrl" type="text" placeholder="https://api.openai.com/v1" />
+              <input v-model="formProvider.baseUrl" type="text" placeholder="https://api.openai.com/v1" @input="handleBaseUrlInput" />
             </div>
 
             <div class="form-group">

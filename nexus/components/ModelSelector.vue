@@ -263,6 +263,31 @@ defineExpose({ toggle, close, isOpen });
   max-height: 340px;
 }
 
+.model-list-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.model-list-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.model-list-scroll::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.12);
+  border-radius: 3px;
+}
+
+.model-list-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.22);
+}
+
+[data-theme="dark"] .model-list-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+[data-theme="dark"] .model-list-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+
 .model-group-header {
   display: flex;
   align-items: center;

@@ -163,6 +163,8 @@ const browserAutomationTabTitle = ref('');
 const toolExecutionStatus = ref<string | null>(null);
 const sharePageContentEnabled = ref(false);
 const sharePageContentTitle = ref('');
+const sharePageContentUrl = ref('');
+const sharePageContentFavicon = ref('');
 const sharePageContentLoading = ref(false);
 
 // MCP state
@@ -905,7 +907,7 @@ function handleInputDragLeave(event: DragEvent): void {
 // Browser automation & tool execution
 // ============================================================
 
-async function getActiveTab(): Promise<{ id?: number; url?: string; title?: string; windowId?: number } | null> {
+async function getActiveTab(): Promise<{ id?: number; url?: string; title?: string; windowId?: number; favIconUrl?: string } | null> {
   try {
     const tabs = await browser.tabs.query({ active: true, currentWindow: true });
     return tabs[0] || null;
@@ -1151,10 +1153,14 @@ async function toggleSharePageContent(): Promise<void> {
   if (sharePageContentEnabled.value) {
     sharePageContentEnabled.value = false;
     sharePageContentTitle.value = '';
+    sharePageContentUrl.value = '';
+    sharePageContentFavicon.value = '';
   } else {
     const tab = await getActiveTab();
     if (tab) {
       sharePageContentTitle.value = tab.title || '';
+      sharePageContentUrl.value = tab.url ? new URL(tab.url).hostname.replace('www.', '') : '';
+      sharePageContentFavicon.value = tab.favIconUrl || '';
       sharePageContentEnabled.value = true;
     }
   }
@@ -2334,6 +2340,8 @@ onUnmounted(() => {
       :pending-files="pendingFiles"
       :share-page-enabled="sharePageContentEnabled"
       :share-page-title="sharePageContentTitle"
+      :share-page-url="sharePageContentUrl"
+      :share-page-favicon="sharePageContentFavicon"
       :share-page-loading="sharePageContentLoading"
       :preset-actions="getEffectivePresets()"
       :is-chat-empty="messages.length === 0"

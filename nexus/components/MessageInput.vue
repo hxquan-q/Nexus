@@ -14,6 +14,8 @@ const props = defineProps<{
   pendingFiles: ChatFileAttachment[];
   sharePageEnabled: boolean;
   sharePageTitle: string;
+  sharePageUrl: string;
+  sharePageFavicon: string;
   sharePageLoading: boolean;
   presetActions: { id: string; name: string; content: string }[];
   isChatEmpty: boolean;
@@ -52,6 +54,87 @@ const isImageDragActive = ref(false);
 const isFocused = ref(false);
 const text = ref('');
 const expandedPresets = ref(false);
+
+// Markdown formatting toolbar
+type FormatAction = 'bold' | 'italic' | 'code' | 'codeblock' | 'link' | 'list';
+
+function insertFormat(action: FormatAction): void {
+  const textarea = textareaRef.value;
+  if (!textarea) return;
+
+  const start = textarea.selectionStart;
+  const end = textarea.selectionEnd;
+  const selectedText = text.value.substring(start, end);
+  const beforeText = text.value.substring(0, start);
+  const afterText = text.value.substring(end);
+
+  let insertBefore = '';
+  let insertAfter = '';
+  let cursorOffset = 0;
+
+  switch (action) {
+    case 'bold':
+      insertBefore = '**';
+      insertAfter = '**';
+      cursorOffset = selectedText ? selectedText.length + 4 : 2;
+      break;
+    case 'italic':
+      insertBefore = '*';
+      insertAfter = '*';
+      cursorOffset = selectedText ? selectedText.length + 2 : 1;
+      break;
+    case 'code':
+      insertBefore = '`';
+      insertAfter = '`';
+      cursorOffset = selectedText ? selectedText.length + 2 : 1;
+      break;
+    case 'codeblock':
+      insertBefore = '```\n';
+      insertAfter = '\n```';
+      cursorOffset = selectedText ? selectedText.length + 8 : 4;
+      break;
+    case 'link':
+      if (selectedText) {
+        insertBefore = '[';
+        insertAfter = '](url)';
+        cursorOffset = selectedText.length + 7;
+      } else {
+        insertBefore = '[';
+        insertAfter = '](url)';
+        cursorOffset = 1;
+      }
+      break;
+    case 'list':
+      if (selectedText) {
+        const lines = selectedText.split('\n').map((line) => `- ${line}`).join('\n');
+        text.value = beforeText + lines + afterText;
+        nextTick(() => {
+          textarea.selectionStart = start;
+          textarea.selectionEnd = start + lines.length;
+          textarea.focus();
+        });
+        return;
+      } else {
+        insertBefore = '- ';
+        insertAfter = '';
+        cursorOffset = 2;
+      }
+      break;
+  }
+
+  const newText = beforeText + insertBefore + selectedText + insertAfter + afterText;
+  text.value = newText;
+
+  nextTick(() => {
+    if (selectedText) {
+      textarea.selectionStart = start;
+      textarea.selectionEnd = start + insertBefore.length + selectedText.length + insertAfter.length;
+    } else {
+      textarea.selectionStart = textarea.selectionEnd = start + cursorOffset;
+    }
+    textarea.focus();
+  });
+}
 
 const showCharCount = computed(() => text.value.length > 500);
 const charCount = computed(() => text.value.length);
@@ -223,13 +306,43 @@ defineExpose({ textareaRef, text, focus: () => textareaRef.value?.focus() });
         :disabled="sharePageLoading"
         :title="i18n(language, 'sharePage.clickToShare')"
       >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <img v-if="sharePageFavicon" :src="sharePageFavicon" alt="" class="share-page-favicon" />
+        <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M4 19.5A2.5 2.5 0 016.5 17H20"/>
           <path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/>
         </svg>
-        <span>{{ sharePageEnabled ? i18n(language, 'sharePage.shared', { title: sharePageTitle }) : i18n(language, 'sharePage.share') }}</span>
+        <span v-if="sharePageEnabled" class="share-page-info">
+          <span class="share-page-domain">{{ sharePageUrl }}</span>
+          <span class="share-page-title">{{ sharePageTitle }}</span>
+        </span>
+        <span v-else>{{ i18n(language, 'sharePage.share') }}</span>
+        <span v-if="sharePageEnabled" class="share-page-indicator"></span>
       </button>
     </div>
+
+    <!-- Markdown formatting toolbar -->
+    <Transition name="format-toolbar">
+      <div v-if="isFocused" class="format-toolbar">
+        <button class="format-btn" @click="insertFormat('bold')" title="Bold (Ctrl+B)">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M6 4h8a4 4 0 014 4 4 4 0 01-4 4H6z"/><path d="M6 12h9a4 4 0 014 4 4 4 0 01-4 4H6z"/></svg>
+        </button>
+        <button class="format-btn" @click="insertFormat('italic')" title="Italic (Ctrl+I)">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="19" y1="4" x2="10" y2="4"/><line x1="14" y1="20" x2="5" y2="20"/><line x1="15" y1="4" x2="9" y2="20"/></svg>
+        </button>
+        <button class="format-btn" @click="insertFormat('code')" title="Inline code">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+        </button>
+        <button class="format-btn" @click="insertFormat('codeblock')" title="Code block">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><polyline points="9 8 5 12 9 16"/><polyline points="15 8 19 12 15 16"/></svg>
+        </button>
+        <button class="format-btn" @click="insertFormat('link')" title="Link">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
+        </button>
+        <button class="format-btn" @click="insertFormat('list')" title="List">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+        </button>
+      </div>
+    </Transition>
 
     <!-- Input row -->
     <div class="input-row">
@@ -522,6 +635,53 @@ defineExpose({ textareaRef, text, focus: () => textareaRef.value?.focus() });
   white-space: nowrap;
 }
 
+.share-page-favicon {
+  width: 14px;
+  height: 14px;
+  border-radius: 2px;
+  flex-shrink: 0;
+  object-fit: contain;
+}
+
+.share-page-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  align-items: flex-start;
+  overflow: hidden;
+}
+
+.share-page-domain {
+  font-size: 10px;
+  opacity: 0.8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+
+.share-page-title {
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+
+.share-page-indicator {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-success);
+  flex-shrink: 0;
+  animation: share-page-pulse 2s ease-in-out infinite;
+}
+
+@keyframes share-page-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
 .share-page-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
@@ -643,6 +803,48 @@ defineExpose({ textareaRef, text, focus: () => textareaRef.value?.focus() });
 @keyframes stop-pulse {
   0%, 100% { transform: scale(1); opacity: 0.5; }
   50% { transform: scale(1.3); opacity: 0; }
+}
+
+/* Format toolbar */
+.format-toolbar {
+  display: flex;
+  gap: 2px;
+  padding: 2px var(--spacing-sm);
+  margin-bottom: var(--spacing-xs);
+}
+
+.format-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: all var(--transition-fast);
+  opacity: 0.7;
+}
+
+.format-btn:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-primary);
+  opacity: 1;
+}
+
+.format-toolbar-enter-active {
+  animation: format-toolbar-in 150ms ease;
+}
+
+.format-toolbar-leave-active {
+  animation: format-toolbar-in 100ms ease reverse;
+}
+
+@keyframes format-toolbar-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 /* Character count */

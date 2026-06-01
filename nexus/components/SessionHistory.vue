@@ -206,9 +206,15 @@ function cancelRename() {
               />
             </template>
             <template v-else>
-              <span class="history-item-title">
+              <span class="history-item-title" @dblclick.stop="(e) => startRename(session, e)">
                 {{ session.title }}
                 <span v-if="currentSessionId === session.id" class="active-indicator"></span>
+                <span class="history-item-edit-hint" @click.stop="(e) => startRename(session, e)">
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
+                    <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                  </svg>
+                </span>
               </span>
             </template>
             <span class="history-item-date">{{ formatSessionDate(session.updatedAt) }}</span>
@@ -334,6 +340,31 @@ function cancelRename() {
   padding: var(--spacing-xs);
 }
 
+.history-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.history-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.history-list::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.12);
+  border-radius: 3px;
+}
+
+.history-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.22);
+}
+
+[data-theme="dark"] .history-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+[data-theme="dark"] .history-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+
 .history-date-group {
   padding: var(--spacing-xs) var(--spacing-md);
   font-size: var(--font-size-xs);
@@ -400,6 +431,30 @@ function cancelRename() {
   display: flex;
   align-items: center;
   gap: var(--spacing-xs);
+}
+
+.history-item-edit-hint {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  opacity: 0;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.history-item:hover .history-item-edit-hint {
+  opacity: 0.5;
+}
+
+.history-item-edit-hint:hover {
+  opacity: 1 !important;
+  background: var(--color-bg-tertiary);
+  color: var(--color-accent);
 }
 
 .active-indicator {

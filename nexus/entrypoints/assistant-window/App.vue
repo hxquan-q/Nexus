@@ -372,6 +372,8 @@ onUnmounted(() => {
       :pending-files="pendingFiles"
       :share-page-enabled="false"
       :share-page-title="''"
+      :share-page-url="''"
+      :share-page-favicon="''"
       :share-page-loading="false"
       :preset-actions="[]"
       :is-chat-empty="messages.length === 0"

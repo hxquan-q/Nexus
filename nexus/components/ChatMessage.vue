@@ -144,7 +144,7 @@ const isUser = computed(() => props.message.role === 'user');
 
       <div class="message-body">
         <!-- Message bubble -->
-        <div class="message-bubble" :class="[`bubble-${message.role}`, { 'bubble-error': isError }]">
+        <div class="message-bubble" :class="[`bubble-${message.role}`, { 'bubble-error': isError, 'bubble-streaming': isLoading && isLast && isAssistant }]">
           <!-- Images -->
           <div v-if="message.images && message.images.length" class="message-images">
             <img
@@ -439,6 +439,24 @@ const isUser = computed(() => props.message.role === 'user');
 .bubble-error {
   background: var(--color-error-bg);
   border: 1px solid var(--color-error-border);
+}
+
+.bubble-streaming {
+  animation: pulse-streaming 2s ease-in-out infinite;
+}
+
+@keyframes pulse-streaming {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(0, 122, 255, 0); }
+  50% { box-shadow: 0 0 0 2px rgba(0, 122, 255, 0.15); }
+}
+
+[data-theme="dark"] .bubble-streaming {
+  animation: pulse-streaming-dark 2s ease-in-out infinite;
+}
+
+@keyframes pulse-streaming-dark {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(10, 132, 255, 0); }
+  50% { box-shadow: 0 0 0 2px rgba(10, 132, 255, 0.2); }
 }
 
 /* Reasoning block */
