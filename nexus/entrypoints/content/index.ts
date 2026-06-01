@@ -46,7 +46,7 @@ let pendingPopupOptions: { title: string; anchorRect: DOMRect | null; mousePoint
 
 export default defineContentScript({
   matches: ['<all_urls>'],
-  excludeMatches: ['*://*.mhtml', '*://*.mht'],
+  excludeMatches: ['*://*/*.mhtml*', '*://*/*.mht*', 'file://*/*.mhtml', 'file://*/*.mht'],
   runAt: 'document_end',
   main() {
     // Load language setting
