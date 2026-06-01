@@ -168,16 +168,23 @@ const emptyProvider = (): StoredProvider => ({
 });
 
 const formProvider = ref<StoredProvider>(emptyProvider());
+const manualModelId = ref('');
+const fetchModelError = ref<string | null>(null);
 
 function startAddProvider() {
   formProvider.value = emptyProvider();
   editingProvider.value = null;
+  manualModelId.value = '';
+  fetchModelError.value = null;
   showAddProvider.value = true;
 }
 
 function startEditProvider(provider: StoredProvider) {
-  formProvider.value = { ...provider };
+  // Deep clone to preserve existing models list and avoid reactive proxy issues
+  formProvider.value = JSON.parse(JSON.stringify(provider));
   editingProvider.value = provider;
+  manualModelId.value = '';
+  fetchModelError.value = null;
   showAddProvider.value = true;
 }
 
@@ -194,11 +201,15 @@ async function saveProviderForm() {
     return;
   }
 
+  // Auto-select first model if none selected but models exist
   if (p.models.length > 0 && !p.selectedModel) {
     p.selectedModel = p.models[0];
   }
 
-  await saveProvider(p);
+  // Deep clone to strip Vue reactive proxy before persisting
+  const plainProvider: StoredProvider = JSON.parse(JSON.stringify(p));
+
+  await saveProvider(plainProvider);
   providers.value = await getAllProviders();
   showAddProvider.value = false;
   editingProvider.value = null;
@@ -216,14 +227,28 @@ async function removeProvider(id: string) {
 
 async function fetchModelsForProvider() {
   loadingModels.value = true;
+  fetchModelError.value = null;
   try {
     const models = await fetchModels(formProvider.value.baseUrl, formProvider.value.apiKey);
-    formProvider.value.models = models.map((m) => m.id);
+    if (models.length === 0) {
+      fetchModelError.value = 'No models found. The provider may not support the /models endpoint. You can add models manually below.';
+      return;
+    }
+    // Merge fetched models with existing ones (avoid duplicates)
+    const existingSet = new Set(formProvider.value.models);
+    for (const m of models) {
+      if (!existingSet.has(m.id)) {
+        formProvider.value.models.push(m.id);
+        existingSet.add(m.id);
+      }
+    }
     if (models.length > 0 && !formProvider.value.selectedModel) {
       formProvider.value.selectedModel = models[0].id;
     }
+    fetchModelError.value = null;
   } catch (error) {
     console.error('Failed to fetch models:', error);
+    fetchModelError.value = `Failed to fetch models: ${error instanceof Error ? error.message : 'Unknown error'}`;
   } finally {
     loadingModels.value = false;
   }
@@ -254,6 +279,34 @@ function toggleModelVision(model: string) {
     formProvider.value.visionModels.splice(idx, 1);
   } else {
     formProvider.value.visionModels.push(model);
+  }
+}
+
+function addManualModel() {
+  const id = manualModelId.value.trim();
+  if (!id) return;
+  if (!formProvider.value.models.includes(id)) {
+    formProvider.value.models.push(id);
+    if (!formProvider.value.selectedModel) {
+      formProvider.value.selectedModel = id;
+    }
+  }
+  manualModelId.value = '';
+}
+
+function removeModel(model: string) {
+  const idx = formProvider.value.models.indexOf(model);
+  if (idx >= 0) {
+    formProvider.value.models.splice(idx, 1);
+  }
+  // Also remove from visionModels if present
+  const vIdx = formProvider.value.visionModels.indexOf(model);
+  if (vIdx >= 0) {
+    formProvider.value.visionModels.splice(vIdx, 1);
+  }
+  // If the removed model was selected, select the first remaining model
+  if (formProvider.value.selectedModel === model) {
+    formProvider.value.selectedModel = formProvider.value.models.length > 0 ? formProvider.value.models[0] : '';
   }
 }
 
@@ -818,22 +871,36 @@ onMounted(async () => {
                   {{ loadingModels ? i18n(currentLanguage, 'options.loading') : i18n(currentLanguage, 'providers.fetchModels') }}
                 </button>
               </div>
+              <div v-if="fetchModelError" class="fetch-model-error">
+                {{ fetchModelError }}
+              </div>
+              <div class="manual-model-row">
+                <input
+                  v-model="manualModelId"
+                  type="text"
+                  placeholder="Enter model ID manually..."
+                  class="model-input"
+                  @keydown.enter.prevent="addManualModel"
+                />
+                <button class="btn-secondary" @click="addManualModel" :disabled="!manualModelId.trim()">Add</button>
+              </div>
               <div v-if="formProvider.models.length > 0" class="model-tags">
-                <button
+                <div
                   v-for="model in formProvider.models"
                   :key="model"
                   class="model-tag"
                   :class="{ selected: formProvider.selectedModel === model }"
                   @click="formProvider.selectedModel = model"
                 >
-                  <span>{{ model }}</span>
+                  <span class="model-tag-name" @click="formProvider.selectedModel = model">{{ model }}</span>
                   <span
                     class="vision-toggle"
                     :class="{ active: formProvider.visionModels.includes(model) }"
                     @click.stop="toggleModelVision(model)"
                     :title="i18n(currentLanguage, 'providers.vision')"
                   >V</span>
-                </button>
+                  <button class="model-tag-remove" @click.stop="removeModel(model)" :title="'Remove model'">&times;</button>
+                </div>
               </div>
             </div>
 
@@ -2014,5 +2081,75 @@ onMounted(async () => {
 @keyframes options-toast-out {
   from { opacity: 1; }
   to { opacity: 0; }
+}
+
+/* Manual model input row */
+.manual-model-row {
+  display: flex;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-xs);
+}
+
+/* Fetch model error */
+.fetch-model-error {
+  margin-top: var(--spacing-xs);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background: rgba(255, 59, 48, 0.1);
+  color: var(--color-error);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+}
+
+/* Model tag with remove button */
+.model-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: 2px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.model-tag:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.model-tag.selected {
+  background: var(--color-accent);
+  color: white;
+  border-color: var(--color-accent);
+}
+
+.model-tag-name {
+  cursor: pointer;
+}
+
+.model-tag-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 50%;
+  opacity: 0.6;
+  transition: opacity var(--transition-fast);
+}
+
+.model-tag-remove:hover {
+  opacity: 1;
+  color: var(--color-error);
 }
 </style>

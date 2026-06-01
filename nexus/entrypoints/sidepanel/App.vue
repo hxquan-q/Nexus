@@ -207,6 +207,22 @@ const filteredModelOptions = computed(() => {
   );
 });
 
+/** Group filtered model options by provider for the dropdown UI */
+const groupedModelOptions = computed(() => {
+  const groups: { providerId: string; providerName: string; models: { model: string; isVision: boolean }[] }[] = [];
+  for (const opt of filteredModelOptions.value) {
+    let group = groups.find((g) => g.providerId === opt.providerId);
+    if (!group) {
+      group = { providerId: opt.providerId, providerName: opt.providerName, models: [] };
+      groups.push(group);
+    }
+    const provider = providers.value.find((p) => p.id === opt.providerId);
+    const isVision = provider?.visionModels?.includes(opt.model) ?? false;
+    group.models.push({ model: opt.model, isVision });
+  }
+  return groups;
+});
+
 const hasPendingImages = computed(() => pendingImages.value.length > 0);
 const hasPendingFiles = computed(() => pendingFiles.value.length > 0);
 const totalPendingAttachments = computed(() => pendingImages.value.length + pendingFiles.value.length);
@@ -1275,13 +1291,16 @@ async function handleImportSession(event: Event) {
 // ============================================================
 
 async function selectProviderModel(providerId: string, model: string) {
-  const freshProvider = await getActiveProvider();
-  if (!freshProvider) return;
-
-  // Update via storage
+  // Load all providers from storage (do not return early if no active provider)
   const allProviders = await getAllProviders();
   const target = allProviders.find((p) => p.id === providerId);
   if (!target) return;
+
+  // Validate the model exists in the provider's list
+  if (!target.models.includes(model)) {
+    console.error('Model not found in provider:', model, target.models);
+    return;
+  }
 
   if (target.selectedModel !== model) {
     target.selectedModel = model;
@@ -1720,15 +1739,25 @@ onUnmounted(() => {
             @click.stop
           />
         </div>
-        <div
-          v-for="option in filteredModelOptions"
-          :key="`${option.providerId}-${option.model}`"
-          class="model-option"
-          :class="{ active: activeProviderId === option.providerId && activeModelName === option.model }"
-          @click="selectProviderModel(option.providerId, option.model)"
-        >
-          <span class="model-option-provider">{{ option.providerName }}</span>
-          <span class="model-option-name">{{ option.model }}</span>
+        <div class="model-list-scroll">
+          <template v-for="group in groupedModelOptions" :key="group.providerId">
+            <div class="model-group-header">
+              <span class="model-group-name">{{ group.providerName }}</span>
+            </div>
+            <div
+              v-for="item in group.models"
+              :key="`${group.providerId}-${item.model}`"
+              class="model-option"
+              :class="{ active: activeProviderId === group.providerId && activeModelName === item.model }"
+              @click="selectProviderModel(group.providerId, item.model)"
+            >
+              <span class="model-option-name">{{ item.model }}</span>
+              <span class="model-option-badges">
+                <span v-if="item.isVision" class="model-vision-badge" title="Vision model">eye</span>
+                <span v-if="activeProviderId === group.providerId && activeModelName === item.model" class="model-check">&#10003;</span>
+              </span>
+            </div>
+          </template>
         </div>
         <div v-if="filteredModelOptions.length === 0" class="model-option-empty">
           {{ allModelOptions.length === 0 ? i18n(currentLanguage, 'model.noModels') : 'No matching models' }}
@@ -2186,15 +2215,16 @@ onUnmounted(() => {
   top: 100%;
   left: 50%;
   transform: translateX(-50%);
-  min-width: 280px;
-  max-height: 320px;
-  overflow-y: auto;
+  min-width: 300px;
+  max-height: 380px;
   background: var(--color-bg-primary);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-lg);
   z-index: 100;
-  padding: var(--spacing-xs) 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .model-search-row {
@@ -2204,10 +2234,7 @@ onUnmounted(() => {
   padding: var(--spacing-xs) var(--spacing-md);
   border-bottom: 1px solid var(--color-border);
   color: var(--color-text-secondary);
-  position: sticky;
-  top: 0;
-  background: var(--color-bg-primary);
-  z-index: 1;
+  flex-shrink: 0;
 }
 
 .model-search-input {
@@ -2225,10 +2252,32 @@ onUnmounted(() => {
   color: var(--color-text-secondary);
 }
 
+.model-list-scroll {
+  overflow-y: auto;
+  max-height: 340px;
+}
+
+.model-group-header {
+  padding: var(--spacing-xs) var(--spacing-md);
+  background: var(--color-bg-secondary);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.model-group-name {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
 .model-option {
   display: flex;
-  flex-direction: column;
-  padding: var(--spacing-sm) var(--spacing-md);
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--spacing-xs) var(--spacing-md);
   cursor: pointer;
   transition: background var(--transition-fast);
 }
@@ -2238,18 +2287,34 @@ onUnmounted(() => {
 }
 
 .model-option.active {
-  background: var(--color-bg-secondary);
-}
-
-.model-option-provider {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-secondary);
+  background: rgba(0, 122, 255, 0.08);
 }
 
 .model-option-name {
   font-size: var(--font-size-sm);
   color: var(--color-text-primary);
-  font-weight: 500;
+  font-weight: 400;
+}
+
+.model-option-badges {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+.model-vision-badge {
+  font-size: 9px;
+  padding: 1px 4px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  font-weight: 600;
+}
+
+.model-check {
+  color: var(--color-accent);
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .model-option-empty {
