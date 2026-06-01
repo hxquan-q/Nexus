@@ -427,6 +427,7 @@ export async function* streamChat(
     let fullContent = '';
     let fullReasoning = '';
     const toolCallsMap = new Map<number, { id: string; name: string; arguments: string }>();
+    let finishReason: string | null = null;
 
     try {
       for await (const chunk of stream) {
@@ -434,8 +435,14 @@ export async function* streamChat(
 
         // Guard against malformed chunks
         if (!chunk?.choices?.length) continue;
-        const delta = chunk.choices[0]?.delta;
+        const choice = chunk.choices[0];
+        const delta = choice?.delta;
         if (!delta) continue;
+
+        // Track finish_reason
+        if (choice.finish_reason) {
+          finishReason = choice.finish_reason;
+        }
 
         // Handle reasoning/thinking content (DeepSeek reasoning_content)
         const reasoningContent = (delta as any)?.reasoning_content;
@@ -444,7 +451,7 @@ export async function* streamChat(
           yield { type: 'reasoning', content: reasoningContent };
         }
 
-        // Handle text content
+        // Handle text content (skip empty/whitespace-only deltas that add nothing)
         if (delta?.content) {
           fullContent += delta.content;
           yield { type: 'content', content: delta.content };
@@ -483,6 +490,17 @@ export async function* streamChat(
       throw parseError(streamError);
     }
 
+    // Handle finish_reason edge cases
+    if (finishReason === 'length') {
+      // Context limit hit - append truncation notice
+      fullContent += '\n\n*[Response truncated due to context length limit. The conversation may be too long.]*';
+      yield { type: 'content', content: '\n\n*[Response truncated due to context length limit. The conversation may be too long.]*' };
+    } else if (finishReason === 'content_filter') {
+      // Content was blocked by provider filter
+      fullContent += '\n\n*[Response was filtered by the AI provider\'s content policy.]*';
+      yield { type: 'content', content: '\n\n*[Response was filtered by the AI provider\'s content policy.]*' };
+    }
+
     // Collect tool calls in order, filtering out any without valid IDs
     const toolCalls = Array.from(toolCallsMap.entries())
       .sort(([a], [b]) => a - b)
@@ -499,7 +517,10 @@ export async function* streamChat(
       assistantMessage.tool_calls = toolCalls.map((tc) => ({
         id: tc.id,
         type: 'function' as const,
-        function: { name: tc.name, arguments: tc.arguments },
+        function: {
+          name: tc.name,
+          arguments: tc.arguments || '{}',
+        },
       }));
     }
     apiMessages.push(assistantMessage);
@@ -517,7 +538,7 @@ export async function* streamChat(
 
       let parsedArgs: Record<string, unknown>;
       try {
-        parsedArgs = JSON.parse(tc.arguments);
+        parsedArgs = tc.arguments ? JSON.parse(tc.arguments) : {};
       } catch {
         parsedArgs = {};
       }
@@ -557,6 +578,7 @@ export async function* streamChat(
 /**
  * Build the system prompt with optional tool instructions.
  * Includes the user's custom system prompt if set.
+ * Includes language instruction from settings.
  */
 async function buildSystemPrompt(hasTools: boolean): Promise<string> {
   const customPrompt = await getSystemPrompt();
@@ -581,6 +603,13 @@ When you need to interact with the browser or extract web content, use the provi
 6. Always take a fresh snapshot if the page has changed (after navigation, clicks, etc.)
 7. Be careful with sensitive actions like filling forms - confirm with the user if needed
 8. Report what you see and what actions you're taking clearly`;
+  }
+
+  // Append language instruction from user's language setting
+  const { getLanguage } = await import('./storage');
+  const lang = await getLanguage();
+  if (lang === 'zh-CN') {
+    prompt += '\n\nPlease respond in Chinese (Simplified).';
   }
 
   return prompt;
@@ -618,6 +647,7 @@ export async function testProviderConnection(
       baseURL: resolveBaseUrl(baseUrl),
       dangerouslyAllowBrowser: true,
       maxRetries: 0,
+      timeout: 15000,
     });
 
     // Try listing models first (lightweight operation)
@@ -714,6 +744,8 @@ export async function testProviderConnection(
 
 /**
  * Fetch available models from a provider.
+ * Handles 401 (invalid key), 404 (endpoint not supported), 429 (rate limit),
+ * and network timeout errors.
  */
 export async function fetchModels(
   baseUrl: string,
@@ -732,12 +764,29 @@ export async function fetchModels(
       apiKey,
       baseURL: resolveBaseUrl(baseUrl),
       dangerouslyAllowBrowser: true,
+      maxRetries: 0,
+      timeout: 10000,
     });
 
     const response = await client.models.list();
     return response.data.map((m) => ({ id: m.id, name: m.id }));
-  } catch (error) {
-    console.error('Error fetching models:', error);
+  } catch (error: any) {
+    // 401/403 - invalid API key
+    if (error?.status === 401 || error?.status === 403) {
+      console.warn('[Nexus] fetchModels: Invalid API key (401/403)');
+      throw new Error('Invalid API key');
+    }
+    // 404 - provider doesn't support /models endpoint
+    if (error?.status === 404) {
+      console.warn('[Nexus] fetchModels: /models endpoint not found (404). Provider may not support model listing.');
+      return [];
+    }
+    // 429 - rate limited
+    if (error?.status === 429) {
+      console.warn('[Nexus] fetchModels: Rate limited (429)');
+      throw new Error('Rate limited. Please try again in a moment.');
+    }
+    console.error('[Nexus] fetchModels error:', error);
     return [];
   }
 }

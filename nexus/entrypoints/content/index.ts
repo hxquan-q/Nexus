@@ -111,6 +111,14 @@ export default defineContentScript({
   excludeMatches: ['*://*/*.mhtml*', '*://*/*.mht*', 'file://*/*.mhtml', 'file://*/*.mht'],
   runAt: 'document_end',
   main() {
+    // Double-injection guard: if the content script was already loaded
+    // (e.g. extension was reloaded), skip initialization
+    if ((window as any).__nexusContentScriptMainInitialized) {
+      console.log('[Nexus] Content script main() already ran, skipping');
+      return;
+    }
+    (window as any).__nexusContentScriptMainInitialized = true;
+
     // Bail out on restricted pages
     if (isRestrictedPage()) {
       console.log('[Nexus] Content script disabled on restricted page');

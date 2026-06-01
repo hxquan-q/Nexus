@@ -206,20 +206,20 @@ const isUser = computed(() => props.message.role === 'user');
                         <polyline points="23 4 23 10 17 10"/>
                         <path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/>
                       </svg>
-                      Retry
+                      {{ i18n(language, 'error.retry') }}
                     </button>
                     <button class="error-action-btn copy-error" @click="emit('copy-error', parsedError.rawError)">
                       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
                         <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
                       </svg>
-                      Copy error
+                      {{ i18n(language, 'error.copyError') }}
                     </button>
                   </div>
                 </template>
                 <template v-else>
                   {{ message.content.replace('__ERROR__: ', '') }}
-                  <button class="retry-btn" @click="emit('regenerate')">Retry</button>
+                  <button class="retry-btn" @click="emit('regenerate')">{{ i18n(language, 'error.retry') }}</button>
                 </template>
               </div>
             </template>
@@ -273,7 +273,7 @@ const isUser = computed(() => props.message.role === 'user');
               v-if="isLast"
               class="msg-action-btn"
               @click="emit('regenerate')"
-              title="Regenerate"
+              :title="i18n(language, 'action.regenerate')"
             >
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <polyline points="23 4 23 10 17 10"/>
@@ -290,7 +290,7 @@ const isUser = computed(() => props.message.role === 'user');
                 <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
               </svg>
             </button>
-            <button class="msg-action-btn msg-action-danger" @click="emit('delete', index)" title="Delete">
+            <button class="msg-action-btn msg-action-danger" @click="emit('delete', index)" :title="i18n(language, 'action.delete')">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <polyline points="3 6 5 6 21 6"/>
                 <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
@@ -305,7 +305,7 @@ const isUser = computed(() => props.message.role === 'user');
               class="msg-action-btn reaction-btn"
               :class="{ 'reaction-active': message.reaction === 'good' }"
               @click="emit('react', index, message.reaction === 'good' ? 'good' : 'good')"
-              title="Good response"
+              :title="i18n(language, 'action.goodResponse')"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M14 9V5a3 3 0 00-3-3l-4 9v11h11.28a2 2 0 002-1.7l1.38-9a2 2 0 00-2-2.3H14z"/>
@@ -316,7 +316,7 @@ const isUser = computed(() => props.message.role === 'user');
               class="msg-action-btn reaction-btn"
               :class="{ 'reaction-active': message.reaction === 'bad' }"
               @click="emit('react', index, message.reaction === 'bad' ? 'bad' : 'bad')"
-              title="Poor response"
+              :title="i18n(language, 'action.poorResponse')"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M10 15v4a3 3 0 003 3l4-9V2H5.72a2 2 0 00-2 1.7l-1.38 9a2 2 0 002 2.3H10z"/>

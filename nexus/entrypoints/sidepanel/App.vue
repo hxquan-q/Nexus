@@ -135,6 +135,9 @@ const lastErrorInfo = ref<{
 const toastMessage = ref<string | null>(null);
 let toastTimer: ReturnType<typeof setTimeout> | null = null;
 
+// Network offline state
+const isOffline = ref(!navigator.onLine);
+
 function showToast(message: string, duration: number = 2000): void {
   if (toastTimer) clearTimeout(toastTimer);
   toastMessage.value = message;
@@ -243,7 +246,7 @@ const activeModelSupportsVision = computed(() => {
 
 const contextBarColor = computed(() => {
   if (contextUsagePercent.value < 50) return 'var(--color-success)';
-  if (contextUsagePercent.value < 80) return '#ff9500';
+  if (contextUsagePercent.value < 80) return 'var(--color-warning, #ff9500)';
   return 'var(--color-error)';
 });
 
@@ -460,6 +463,7 @@ async function sendWithExistingMessages(): Promise<void> {
         browser.runtime.sendMessage({ type: 'STREAMING_ERROR' }).catch(() => {});
       },
       onAborted: () => {},
+      language: currentLanguage.value,
     });
   } finally {
     chatAbortController.value = null;
@@ -649,7 +653,10 @@ async function addPendingImageFiles(fileList: FileList | File[]): Promise<void> 
 
   const filesToProcess = imageFiles.slice(0, availableSlots);
   for (const file of filesToProcess) {
-    if (file.size > MAX_IMAGE_SIZE_BYTES) continue;
+    if (file.size > MAX_IMAGE_SIZE_BYTES) {
+      showToast(i18n(currentLanguage.value, 'input.imageTooLarge', { size: MAX_IMAGE_SIZE_MB }), 3000);
+      continue;
+    }
 
     try {
       const dataUrl = await fileToDataUrl(file);
@@ -679,7 +686,10 @@ async function addPendingDocumentFiles(fileList: FileList | File[]): Promise<voi
 
   const filesToProcess = docFiles.slice(0, availableSlots);
   for (const file of filesToProcess) {
-    if (file.size > MAX_FILE_SIZE_BYTES) continue;
+    if (file.size > MAX_FILE_SIZE_BYTES) {
+      showToast(i18n(currentLanguage.value, 'input.fileTooLarge', { size: MAX_FILE_SIZE_MB }), 3000);
+      continue;
+    }
 
     try {
       const parsed = await parseFile(file);
@@ -1191,6 +1201,7 @@ async function sendMessage() {
         browser.runtime.sendMessage({ type: 'STREAMING_ERROR' }).catch(() => {});
       },
       onAborted: () => {},
+      language: currentLanguage.value,
     });
   } finally {
     chatAbortController.value = null;
@@ -1316,7 +1327,7 @@ async function loadSession(session: ChatSession) {
 async function removeSession(id: string) {
   if (confirm(i18n(currentLanguage.value, 'history.deleteConfirm'))) {
     await deleteSession(id);
-    sessions.value = await getAllSessions();
+    await loadInitialSessions();
     if (currentSession.value?.id === id) {
       if (sessions.value.length > 0) {
         await loadSession(sessions.value[0]);
@@ -1689,6 +1700,7 @@ async function handleContentImageMessage(imageUrl: string, prompt: string): Prom
         if (soundEffectsEnabled.value) playErrorSound();
       },
       onAborted: () => {},
+      language: currentLanguage.value,
     });
   } finally {
     chatAbortController.value = null;
@@ -1816,6 +1828,16 @@ onMounted(async () => {
   unwatchShowReactions.value = watchShowReactions((enabled) => {
     showReactionsEnabled.value = enabled;
   });
+
+  // Network status monitoring
+  const handleOnline = () => { isOffline.value = false; };
+  const handleOffline = () => { isOffline.value = true; };
+  window.addEventListener('online', handleOnline);
+  window.addEventListener('offline', handleOffline);
+
+  // Store refs for cleanup
+  (window as any).__nexusOnlineHandler = handleOnline;
+  (window as any).__nexusOfflineHandler = handleOffline;
 });
 
 onUnmounted(() => {
@@ -1830,6 +1852,11 @@ onUnmounted(() => {
   if (saveTimer) clearTimeout(saveTimer);
   if (toastTimer) clearTimeout(toastTimer);
   clearStreamRenderState();
+  // Cleanup network listeners
+  const onlineHandler = (window as any).__nexusOnlineHandler;
+  const offlineHandler = (window as any).__nexusOfflineHandler;
+  if (onlineHandler) window.removeEventListener('online', onlineHandler);
+  if (offlineHandler) window.removeEventListener('offline', offlineHandler);
   unwatchProviders.value?.();
   unwatchActiveProviderId.value?.();
   unwatchLanguage.value?.();
@@ -2017,7 +2044,7 @@ onUnmounted(() => {
               <span class="template-card-name">{{ template.name }}</span>
             </button>
           </div>
-          <p v-if="!activeProvider" class="empty-state-hint">OpenAI, Claude, Gemini, DeepSeek & more</p>
+          <p v-if="!activeProvider" class="empty-state-hint">{{ i18n(currentLanguage, 'empty.hint') }}</p>
         </div>
       </div>
 
@@ -2044,7 +2071,7 @@ onUnmounted(() => {
         @regenerate="regenerateLastResponse"
         @toggle-reasoning="(i) => reasoningExpanded[i] = !reasoningExpanded[i]"
         @open-lightbox="openLightbox"
-        @copy-error="(rawError) => { writeTextToClipboard(rawError).then((ok) => { if (ok) showToast('Error details copied'); }); }"
+        @copy-error="(rawError) => { writeTextToClipboard(rawError).then((ok) => { if (ok) showToast(i18n(currentLanguage, 'chat.copied')); }); }"
         @react="handleMessageReaction"
       />
 
@@ -2053,12 +2080,26 @@ onUnmounted(() => {
         v-if="showScrollToBottom"
         class="scroll-to-bottom-btn"
         @click="handleScrollToBottom"
-        title="Scroll to bottom"
+        :title="i18n(currentLanguage, 'action.scrollToBottom')"
       >
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <polyline points="6 9 12 15 18 9"/>
         </svg>
       </button>
+    </div>
+
+    <!-- Network offline warning -->
+    <div v-if="isOffline" class="offline-warning-bar">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <line x1="1" y1="1" x2="23" y2="23"/>
+        <path d="M16.72 11.06A10.94 10.94 0 0119 12.55"/>
+        <path d="M5 12.55a10.94 10.94 0 015.17-2.39"/>
+        <path d="M10.71 5.05A16 16 0 0122.56 9"/>
+        <path d="M1.42 9a15.91 15.91 0 014.7-2.88"/>
+        <path d="M8.53 16.11a6 6 0 016.95 0"/>
+        <line x1="12" y1="20" x2="12.01" y2="20"/>
+      </svg>
+      <span>{{ i18n(currentLanguage, 'network.offline') }}</span>
     </div>
 
     <!-- Browser automation status -->
@@ -2076,7 +2117,7 @@ onUnmounted(() => {
         <line x1="12" y1="9" x2="12" y2="13"/>
         <line x1="12" y1="17" x2="12.01" y2="17"/>
       </svg>
-      <span>Context near limit. Older messages may be trimmed.</span>
+      <span>{{ i18n(currentLanguage, 'context.nearLimit') }}</span>
     </div>
 
     <!-- Input area -->
@@ -2606,7 +2647,19 @@ onUnmounted(() => {
 
 .automation-status-stop:hover {
   background: var(--color-error);
-  color: white;
+  color: var(--color-text-on-accent);
+}
+
+/* Network offline warning bar */
+.offline-warning-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-xs) var(--spacing-md);
+  background: rgba(255, 59, 48, 0.1);
+  border-top: 1px solid rgba(255, 59, 48, 0.2);
+  font-size: var(--font-size-xs);
+  color: var(--color-error);
 }
 
 /* Context warning bar */
@@ -2618,7 +2671,11 @@ onUnmounted(() => {
   background: rgba(255, 149, 0, 0.1);
   border-top: 1px solid rgba(255, 149, 0, 0.2);
   font-size: var(--font-size-xs);
-  color: #ff9500;
+  color: var(--color-text-secondary);
+}
+
+[data-theme="dark"] .context-warning-bar {
+  color: #ffb340;
 }
 
 /* Selection quote popup */

@@ -6,12 +6,14 @@
 import { triggerRef, type ShallowRef } from 'vue';
 import type { AIProvider, ChatMessage as ChatMessageType, ToolCall, ToolResult } from '../utils/providers/types';
 import { streamChat, ApiError, type ApiErrorCode } from '../utils/api';
+import { t } from '../utils/i18n';
 
 interface StreamCallbacks {
   onAssistantMessageCreated: (msg: ChatMessageType) => void;
   onContentUpdate: () => void;
   onError: (errorInfo: { message: string; code: ApiErrorCode; rawError: string }) => void;
   onAborted: () => void;
+  language?: 'en' | 'zh-CN';
 }
 
 interface StreamOptions {
@@ -134,7 +136,7 @@ export function useStreamChat(
         } else {
           assistantMessage.content = (assistantMessage.content || '').trim();
           if (assistantMessage.content) {
-            assistantMessage.content += '\n\n---\n*Generation interrupted.*';
+            assistantMessage.content += '\n\n---\n*' + t(callbacks.language || 'en', 'chat.generationInterrupted') + '*';
             triggerRef(messages);
           }
           return assistantMessage;

@@ -14,6 +14,7 @@
   --color-accent-hover: #0056cc;
   --color-error: #ff3b30;
   --color-success: #34c759;
+  --color-warning: #ff9500;
 
   /* Code block colors */
   --color-code-bg: #f0f0f5;
@@ -75,6 +76,7 @@
   --color-border: rgba(255, 255, 255, 0.1);
   --color-accent: #0a84ff;
   --color-accent-hover: #409cff;
+  --color-warning: #ffb340;
 
   /* Code block colors - darker than chat bubble */
   --color-code-bg: #1a1a1c;

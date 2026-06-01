@@ -340,6 +340,29 @@ const translations: Record<Language, Record<TranslationKey, string>> = {
     // ===== Appearance: Sound =====
     'appearance.soundEffects': 'Sound Effects',
     'appearance.soundEffectsDesc': 'Play subtle sounds on send and receive',
+
+    // ===== Context Warning =====
+    'context.nearLimit': 'Context near limit. Older messages may be trimmed.',
+
+    // ===== Error Buttons =====
+    'error.retry': 'Retry',
+    'error.copyError': 'Copy error',
+
+    // ===== Action Titles =====
+    'action.regenerate': 'Regenerate',
+    'action.delete': 'Delete',
+    'action.goodResponse': 'Good response',
+    'action.poorResponse': 'Poor response',
+    'action.scrollToBottom': 'Scroll to bottom',
+
+    // ===== Interrupted =====
+    'chat.generationInterrupted': 'Generation interrupted.',
+
+    // ===== Empty State Hint =====
+    'empty.hint': 'OpenAI, Claude, Gemini, DeepSeek & more',
+
+    // ===== Network =====
+    'network.offline': 'You are offline. Check your internet connection.',
   },
 
   'zh-CN': {
@@ -673,6 +696,29 @@ const translations: Record<Language, Record<TranslationKey, string>> = {
     // ===== Appearance: Sound =====
     'appearance.soundEffects': '音效',
     'appearance.soundEffectsDesc': '发送和接收时播放提示音',
+
+    // ===== Context Warning =====
+    'context.nearLimit': '上下文接近上限，较早的消息可能会被裁剪。',
+
+    // ===== Error Buttons =====
+    'error.retry': '重试',
+    'error.copyError': '复制错误',
+
+    // ===== Action Titles =====
+    'action.regenerate': '重新生成',
+    'action.delete': '删除',
+    'action.goodResponse': '好的回复',
+    'action.poorResponse': '差的回复',
+    'action.scrollToBottom': '滚动到底部',
+
+    // ===== Interrupted =====
+    'chat.generationInterrupted': '生成已中断。',
+
+    // ===== Empty State Hint =====
+    'empty.hint': 'OpenAI, Claude, Gemini, DeepSeek 等更多',
+
+    // ===== Network =====
+    'network.offline': '当前处于离线状态，请检查网络连接。',
   },
 };
 
