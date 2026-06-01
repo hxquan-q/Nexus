@@ -2103,7 +2103,7 @@ onUnmounted(() => {
           :has-session="!!currentSession && messages.length > 0"
           @share-chat="shareChatAsMarkdown"
           @export-chat="handleExportCurrentSession"
-          @search-chat="showSearch = true"
+          @search="showSearch = true"
           @pop-out="popOutChat"
           @clear-chat="clearCurrentChat"
         />
