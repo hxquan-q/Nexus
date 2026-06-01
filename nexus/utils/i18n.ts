@@ -377,6 +377,27 @@ const translations: Record<Language, Record<TranslationKey, string>> = {
 
     // ===== Network =====
     'network.offline': 'You are offline. Check your internet connection.',
+
+    // ===== Header Menu =====
+    'menu.shareChat': 'Copy as Markdown',
+    'menu.exportChat': 'Export Chat',
+    'menu.searchChat': 'Find in Chat',
+    'menu.popOut': 'Pop Out Window',
+    'menu.clearChat': 'Clear Conversation',
+
+    // ===== Search =====
+    'search.placeholder': 'Search in conversation...',
+    'search.noResults': 'No results',
+
+    // ===== Share =====
+    'share.copied': 'Chat copied to clipboard',
+    'share.copiedFailed': 'Failed to copy chat',
+
+    // ===== Context Trimming =====
+    'context.trimmed': 'Context trimmed - older messages removed',
+
+    // ===== Pop Out =====
+    'popOut.title': 'Nexus Chat',
   },
 
   'zh-CN': {
@@ -747,6 +768,27 @@ const translations: Record<Language, Record<TranslationKey, string>> = {
 
     // ===== Network =====
     'network.offline': '当前处于离线状态，请检查网络连接。',
+
+    // ===== Header Menu =====
+    'menu.shareChat': '复制为 Markdown',
+    'menu.exportChat': '导出对话',
+    'menu.searchChat': '在对话中查找',
+    'menu.popOut': '弹出窗口',
+    'menu.clearChat': '清除对话',
+
+    // ===== Search =====
+    'search.placeholder': '在对话中搜索...',
+    'search.noResults': '无结果',
+
+    // ===== Share =====
+    'share.copied': '对话已复制到剪贴板',
+    'share.copiedFailed': '复制失败',
+
+    // ===== Context Trimming =====
+    'context.trimmed': '上下文已裁剪 - 较早的消息已移除',
+
+    // ===== Pop Out =====
+    'popOut.title': 'Nexus 对话',
   },
 };
 

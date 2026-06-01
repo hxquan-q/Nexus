@@ -48,6 +48,7 @@ import { getAllTemplates, type ChatTemplate } from '../../utils/templates';
 import { useStreamChat } from '../../composables/useStreamChat';
 import { getPresetActions, type PresetAction, getSoundEffects, watchSoundEffects, getShowReactions, watchShowReactions } from '../../utils/storage';
 import { playSentSound, playReceivedSound, playErrorSound } from '../../utils/sounds';
+import { trimMessagesToContextLimit, createTrimNotice, getContextLimit } from '../../utils/contextTrim';
 
 // Extracted components
 import ChatMessage from '../../components/ChatMessage.vue';
@@ -56,6 +57,8 @@ import SessionHistory from '../../components/SessionHistory.vue';
 import MessageInput from '../../components/MessageInput.vue';
 import CodeFullscreen from '../../components/CodeFullscreen.vue';
 import OnboardingWizard from '../../components/OnboardingWizard.vue';
+import HeaderMenu from '../../components/HeaderMenu.vue';
+import ChatSearch from '../../components/ChatSearch.vue';
 
 // Alias for readability
 type ChatMessageData = ChatMessageType;
@@ -205,6 +208,12 @@ const unwatchSoundEffects = ref<(() => void) | null>(null);
 // Onboarding state
 const showOnboarding = ref(false);
 
+// Chat search state
+const showSearch = ref(false);
+
+// Context trimming warning
+const contextTrimmedWarning = ref(false);
+
 // Reaction display state
 const showReactionsEnabled = ref(true);
 const unwatchShowReactions = ref<(() => void) | null>(null);
@@ -283,12 +292,116 @@ function updateContextUsage() {
     return;
   }
   contextTokenEstimate.value = estimateMessagesTokens(messages.value as { content: string }[]);
+
+  // Update context max based on current model
+  if (activeProvider.value) {
+    contextTokenMax.value = getContextLimit(activeProvider.value.selectedModel);
+  }
+
   contextUsagePercent.value = Math.min(100, Math.round((contextTokenEstimate.value / contextTokenMax.value) * 100));
 }
 
 function getEffectivePresets(): PresetAction[] {
   if (presetActions.value.length > 0) return presetActions.value;
   return defaultPresetActions;
+}
+
+// ============================================================
+// Share chat as Markdown
+// ============================================================
+
+async function shareChatAsMarkdown(): Promise<void> {
+  if (messages.value.length === 0) return;
+
+  const lines: string[] = [];
+  lines.push('# Chat with Nexus');
+  const dateStr = new Date().toLocaleDateString(
+    currentLanguage.value === 'zh-CN' ? 'zh-CN' : 'en-US',
+    { year: 'numeric', month: 'long', day: 'numeric' }
+  );
+  lines.push(`Date: ${dateStr}`);
+  if (activeProvider.value) {
+    lines.push(`Model: ${activeProvider.value.selectedModel}`);
+  }
+  lines.push('');
+  lines.push('---');
+  lines.push('');
+
+  for (const msg of messages.value) {
+    if (msg.content?.startsWith('__ERROR__:')) continue;
+
+    const role = msg.role === 'user' ? '**User:**' : '**Nexus:**';
+    lines.push(role);
+    lines.push('');
+
+    // For user messages with file content, show only the display part
+    let content = msg.content || '';
+    if (msg.role === 'user' && msg.fileAttachments && msg.fileAttachments.length > 0) {
+      const separatorIndex = content.indexOf('\n\n---\n\n');
+      if (separatorIndex !== -1) {
+        content = content.substring(0, separatorIndex).trim();
+      }
+    }
+
+    if (content.trim()) {
+      lines.push(content);
+    }
+    lines.push('');
+    lines.push('---');
+    lines.push('');
+  }
+
+  const markdown = lines.join('\n');
+  const copied = await writeTextToClipboard(markdown);
+  if (copied) {
+    showToast(i18n(currentLanguage.value, 'share.copied'));
+  } else {
+    showToast(i18n(currentLanguage.value, 'share.copiedFailed'), 3000);
+  }
+}
+
+// ============================================================
+// Pop out window
+// ============================================================
+
+async function popOutChat(): Promise<void> {
+  try {
+    const currentWindow = await browser.windows.getCurrent();
+    browser.windows.create({
+      url: browser.runtime.getURL('/assistant-window.html' as any),
+      type: 'popup',
+      width: 420,
+      height: 640,
+      left: (currentWindow.left || 0) + (currentWindow.width || 800) - 440,
+      top: currentWindow.top || 0,
+    });
+  } catch {
+    // Fallback: open in new tab
+    browser.tabs.create({ url: browser.runtime.getURL('/assistant-window.html' as any) });
+  }
+}
+
+// ============================================================
+// Clear current conversation
+// ============================================================
+
+async function clearCurrentChat(): Promise<void> {
+  const confirmed = await showConfirmation(
+    i18n(currentLanguage.value, 'history.deleteConfirm'),
+    ''
+  );
+  if (!confirmed) return;
+  if (currentSession.value) {
+    await deleteSession(currentSession.value.id);
+  }
+  currentSession.value = null;
+  messages.value = [];
+  setLastApiMessages([]);
+  pendingImages.value = [];
+  pendingFiles.value = [];
+  contextTrimmedWarning.value = false;
+  updateContextUsage();
+  await loadInitialSessions();
 }
 
 function openLightbox(dataUrl: string) {
@@ -607,6 +720,12 @@ function handleGlobalKeydown(event: KeyboardEvent): void {
     if (lastAssistantIdx >= 0) {
       copyMessage(lastAssistantIdx);
     }
+    return;
+  }
+
+  if (event.ctrlKey && event.key === 'f') {
+    event.preventDefault();
+    showSearch.value = true;
     return;
   }
 }
@@ -1961,6 +2080,15 @@ onUnmounted(() => {
             <line x1="5" y1="12" x2="19" y2="12"/>
           </svg>
         </button>
+        <HeaderMenu
+          :language="currentLanguage"
+          :has-session="!!currentSession && messages.length > 0"
+          @share-chat="shareChatAsMarkdown"
+          @export-chat="handleExportCurrentSession"
+          @search-chat="showSearch = true"
+          @pop-out="popOutChat"
+          @clear-chat="clearCurrentChat"
+        />
         <button class="header-btn" @click="openSettings" :title="i18n(currentLanguage, 'header.settings')" :aria-label="i18n(currentLanguage, 'header.settings')">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="3"/>
@@ -1971,6 +2099,12 @@ onUnmounted(() => {
     </header>
 
     <!-- Chat area -->
+    <ChatSearch
+      v-if="showSearch"
+      :language="currentLanguage"
+      :chat-area-ref="chatAreaRef"
+      @close="showSearch = false"
+    />
     <div class="chat-area" ref="chatAreaRef" role="log" aria-label="Chat messages" aria-live="polite">
       <!-- Onboarding wizard -->
       <OnboardingWizard
@@ -2150,6 +2284,18 @@ onUnmounted(() => {
       </svg>
       <span>{{ i18n(currentLanguage, 'context.nearLimit') }}</span>
     </div>
+
+    <!-- Context trimmed notice -->
+    <Transition name="toast">
+      <div v-if="contextTrimmedWarning" class="context-trimmed-bar" @click="contextTrimmedWarning = false">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"/>
+          <line x1="12" y1="8" x2="12" y2="12"/>
+          <line x1="12" y1="16" x2="12.01" y2="16"/>
+        </svg>
+        <span>{{ i18n(currentLanguage, 'context.trimmed') }}</span>
+      </div>
+    </Transition>
 
     <!-- Input area -->
     <input
@@ -2703,6 +2849,25 @@ onUnmounted(() => {
   border-top: 1px solid var(--color-warning-border);
   font-size: var(--font-size-xs);
   color: var(--color-warning);
+}
+
+/* Context trimmed notice bar */
+.context-trimmed-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-xs) var(--spacing-md);
+  background: var(--color-success-bg);
+  border-top: 1px solid var(--color-border);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  animation: trimmed-bar-in 200ms ease;
+}
+
+@keyframes trimmed-bar-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 /* Selection quote popup */

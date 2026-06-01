@@ -9,6 +9,7 @@ import type { ChatCompletionMessageParam, ChatCompletionTool } from 'openai/reso
 import type { AIProvider, ChatMessage, ChatImage, StreamEvent, ToolCall, ToolResult } from './providers/types';
 import { getAdapterConfig, isOpenAICompatible } from './providers/adapters';
 import { getSystemPrompt } from './storage';
+import { trimMessagesToContextLimit, createTrimNotice, getContextLimit } from './contextTrim';
 
 // ============================================================
 // Error handling
@@ -349,9 +350,16 @@ export async function* streamChat(
 
   const systemPrompt = await buildSystemPrompt(!!(tools && tools.length > 0));
 
+  // Apply context trimming to messages before building API messages
+  const contextLimit = getContextLimit(provider.selectedModel);
+  const systemPromptTokens = systemPrompt.length ? Math.ceil(systemPrompt.length / 4) : 0;
+  const trimResult = trimMessagesToContextLimit(messages, provider.selectedModel, systemPromptTokens);
+  const trimmedMessages = trimResult.messages;
+
   const apiMessages: ApiMessage[] = [
     { role: 'system', content: systemPrompt },
-    ...messages.map((m) => ({
+    ...(trimResult.trimmed ? [{ role: 'system' as const, content: createTrimNotice(trimResult) }] : []),
+    ...trimmedMessages.map((m) => ({
       role: m.role as 'user' | 'assistant',
       content: m.role === 'user' ? buildUserMessageContent(m, allowImages) : m.content,
     })),
