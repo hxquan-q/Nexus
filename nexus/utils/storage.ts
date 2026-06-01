@@ -360,6 +360,28 @@ export function watchSoundEffects(callback: (enabled: boolean) => void): () => v
 }
 
 // ============================================================
+// Show message reactions
+// ============================================================
+
+const showReactionsStorage = storage.defineItem<boolean>('local:showReactions', {
+  fallback: true,
+});
+
+export async function getShowReactions(): Promise<boolean> {
+  return await showReactionsStorage.getValue();
+}
+
+export async function setShowReactions(enabled: boolean): Promise<void> {
+  await showReactionsStorage.setValue(enabled);
+}
+
+export function watchShowReactions(callback: (enabled: boolean) => void): () => void {
+  return showReactionsStorage.watch((newValue) => {
+    callback(newValue);
+  });
+}
+
+// ============================================================
 // Helper: convert StoredProvider to AIProvider for API layer
 // ============================================================
 

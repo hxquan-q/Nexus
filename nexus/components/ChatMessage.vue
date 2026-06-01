@@ -16,6 +16,7 @@ const props = defineProps<{
   editingText: string;
   copied: boolean;
   reasoningExpanded: boolean;
+  showReactions: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -29,6 +30,7 @@ const emit = defineEmits<{
   (e: 'toggle-reasoning', index: number): void;
   (e: 'open-lightbox', dataUrl: string): void;
   (e: 'copy-error', rawError: string): void;
+  (e: 'react', index: number, reaction: 'good' | 'bad'): void;
 }>();
 
 function getUserMessageDisplayContent(message: ChatMessage): string {
@@ -295,6 +297,33 @@ const isUser = computed(() => props.message.role === 'user');
               </svg>
             </button>
           </template>
+
+          <!-- Reaction buttons for assistant messages -->
+          <template v-if="isAssistant && showReactions && message.content && !isError">
+            <span class="msg-action-separator"></span>
+            <button
+              class="msg-action-btn reaction-btn"
+              :class="{ 'reaction-active': message.reaction === 'good' }"
+              @click="emit('react', index, message.reaction === 'good' ? 'good' : 'good')"
+              title="Good response"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M14 9V5a3 3 0 00-3-3l-4 9v11h11.28a2 2 0 002-1.7l1.38-9a2 2 0 00-2-2.3H14z"/>
+                <path d="M7 22H4a2 2 0 01-2-2v-7a2 2 0 012-2h3"/>
+              </svg>
+            </button>
+            <button
+              class="msg-action-btn reaction-btn"
+              :class="{ 'reaction-active': message.reaction === 'bad' }"
+              @click="emit('react', index, message.reaction === 'bad' ? 'bad' : 'bad')"
+              title="Poor response"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M10 15v4a3 3 0 003 3l4-9V2H5.72a2 2 0 00-2 1.7l-1.38 9a2 2 0 002 2.3H10z"/>
+                <path d="M17 2h2.67A2.31 2.31 0 0122 4v7a2.31 2.31 0 01-2.33 2H17"/>
+              </svg>
+            </button>
+          </template>
         </div>
       </div>
     </div>
@@ -333,11 +362,13 @@ const isUser = computed(() => props.message.role === 'user');
 .message-row {
   display: flex;
   gap: var(--spacing-sm);
-  max-width: 95%;
+  max-width: 100%;
 }
 
 .message-user .message-row {
   flex-direction: row-reverse;
+  max-width: 85%;
+  margin-left: auto;
 }
 
 .message-body {
@@ -393,13 +424,15 @@ const isUser = computed(() => props.message.role === 'user');
 .bubble-user {
   background: var(--color-bg-user-bubble);
   color: var(--color-text-user-bubble);
+  border-radius: var(--radius-lg);
   border-bottom-right-radius: var(--radius-xs);
 }
 
 .bubble-assistant {
-  background: var(--color-bg-assistant-bubble);
+  background: transparent;
   color: var(--color-text-primary);
-  border-bottom-left-radius: var(--radius-xs);
+  padding-left: 0;
+  padding-right: 0;
 }
 
 .bubble-error {
@@ -571,6 +604,27 @@ const isUser = computed(() => props.message.role === 'user');
 
 .msg-action-danger:hover {
   color: var(--color-error);
+}
+
+/* Reaction buttons */
+.msg-action-separator {
+  width: 1px;
+  height: 14px;
+  background: var(--color-border);
+  margin: 0 2px;
+}
+
+.reaction-btn.reaction-active {
+  color: var(--color-accent);
+}
+
+.reaction-btn.reaction-active svg {
+  fill: var(--color-accent);
+  fill-opacity: 0.15;
+}
+
+.reaction-btn:hover {
+  color: var(--color-accent);
 }
 
 /* Edit message */

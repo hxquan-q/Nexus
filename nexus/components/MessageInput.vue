@@ -282,7 +282,6 @@ defineExpose({ textareaRef, text, focus: () => textareaRef.value?.focus() });
 <style scoped>
 .input-area {
   padding: var(--spacing-sm) var(--spacing-md);
-  border-top: 1px solid var(--color-border);
   background: var(--color-bg-primary);
   transition: background var(--transition-fast), border-color var(--transition-fast);
   position: relative;
@@ -518,15 +517,24 @@ defineExpose({ textareaRef, text, focus: () => textareaRef.value?.focus() });
 .input-row {
   display: flex;
   align-items: flex-end;
-  gap: var(--spacing-sm);
+  gap: 0;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  padding: 2px 4px 2px 4px;
+  transition: border-color var(--transition-fast);
+}
+
+.input-row:focus-within {
+  border-color: var(--color-accent);
 }
 
 .input-action-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   border: none;
   background: transparent;
   color: var(--color-text-secondary);
@@ -537,7 +545,6 @@ defineExpose({ textareaRef, text, focus: () => textareaRef.value?.focus() });
 }
 
 .input-action-btn:hover {
-  background: var(--color-bg-secondary);
   color: var(--color-text-primary);
 }
 
@@ -548,25 +555,20 @@ defineExpose({ textareaRef, text, focus: () => textareaRef.value?.focus() });
 
 .input-textarea {
   flex: 1;
-  padding: var(--spacing-sm) var(--spacing-md);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-xl);
-  background: var(--color-bg-secondary);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border: none;
+  border-radius: 0;
+  background: transparent;
   color: var(--color-text-primary);
   font-family: var(--font-body);
   font-size: var(--font-size-md);
   resize: none;
   outline: none;
-  min-height: 36px;
+  min-height: 32px;
   max-height: 156px;
   line-height: 22px;
-  transition: border-color var(--transition-fast);
   word-break: break-word;
   overflow-wrap: anywhere;
-}
-
-.input-textarea:focus {
-  border-color: var(--color-accent);
 }
 
 .input-textarea::placeholder {
@@ -577,10 +579,10 @@ defineExpose({ textareaRef, text, focus: () => textareaRef.value?.focus() });
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   border: none;
-  background: var(--color-bg-tertiary);
+  background: transparent;
   color: var(--color-text-secondary);
   cursor: default;
   border-radius: 50%;

@@ -43,6 +43,27 @@ chrome.alarms?.onAlarm?.addListener((alarm: any) => {
 });
 
 // ============================================================
+// Extension icon badge management
+// ============================================================
+
+function setBadge(text: string, color: string): void {
+  try {
+    chrome.action.setBadgeText({ text });
+    chrome.action.setBadgeBackgroundColor({ color });
+  } catch {
+    // Badge API may not be available in all contexts
+  }
+}
+
+function clearBadge(): void {
+  try {
+    chrome.action.setBadgeText({ text: '' });
+  } catch {
+    // Ignore
+  }
+}
+
+// ============================================================
 // In-progress state (stored in session storage for SW restart recovery)
 // ============================================================
 
@@ -305,6 +326,7 @@ export default defineBackground(() => {
           async () => {
             startKeepalive();
             await setInProgressState({ isStreaming: true, sessionId: message.sessionId, timestamp: Date.now() });
+            setBadge('...', '#007AFF');
             return { ok: true };
           },
           sendResponse,
@@ -317,6 +339,48 @@ export default defineBackground(() => {
           async () => {
             await setInProgressState(null);
             stopKeepalive();
+            clearBadge();
+            return { ok: true };
+          },
+          sendResponse,
+        );
+        return true;
+      }
+
+      case 'STREAMING_START': {
+        handleAsyncMessage(
+          async () => {
+            startKeepalive();
+            await setInProgressState({ isStreaming: true, sessionId: message.sessionId, timestamp: Date.now() });
+            setBadge('...', '#007AFF');
+            return { ok: true };
+          },
+          sendResponse,
+        );
+        return true;
+      }
+
+      case 'STREAMING_END': {
+        handleAsyncMessage(
+          async () => {
+            await setInProgressState(null);
+            stopKeepalive();
+            clearBadge();
+            return { ok: true };
+          },
+          sendResponse,
+        );
+        return true;
+      }
+
+      case 'STREAMING_ERROR': {
+        handleAsyncMessage(
+          async () => {
+            await setInProgressState(null);
+            stopKeepalive();
+            setBadge('!', '#FF3B30');
+            // Auto-clear error badge after 5 seconds
+            setTimeout(() => clearBadge(), 5000);
             return { ok: true };
           },
           sendResponse,
@@ -440,11 +504,17 @@ export default defineBackground(() => {
           async () => {
             startKeepalive();
             await setInProgressState({ isStreaming: true, timestamp: Date.now() });
+            setBadge('...', '#007AFF');
             try {
               const { actionId, text, prompt } = message;
               // Process via AI in background and return result to content script
               const result = await processSelectionAction(actionId, text, prompt);
+              clearBadge();
               return result;
+            } catch (error) {
+              setBadge('!', '#FF3B30');
+              setTimeout(() => clearBadge(), 5000);
+              throw error;
             } finally {
               await setInProgressState(null);
               stopKeepalive();

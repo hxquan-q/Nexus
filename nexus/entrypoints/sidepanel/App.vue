@@ -44,7 +44,7 @@ import { executeScript, setScriptConfirmCallback, type ScriptConfirmationRequest
 import { estimateMessagesTokens } from '../../utils/tokenCount';
 import { getAllTemplates, type ChatTemplate } from '../../utils/templates';
 import { useStreamChat } from '../../composables/useStreamChat';
-import { getPresetActions, type PresetAction, getSoundEffects, watchSoundEffects } from '../../utils/storage';
+import { getPresetActions, type PresetAction, getSoundEffects, watchSoundEffects, getShowReactions, watchShowReactions } from '../../utils/storage';
 import { playSentSound, playReceivedSound, playErrorSound } from '../../utils/sounds';
 
 // Extracted components
@@ -195,6 +195,10 @@ const defaultPresetActions: PresetAction[] = [
 // Sound effects state
 const soundEffectsEnabled = ref(false);
 const unwatchSoundEffects = ref<(() => void) | null>(null);
+
+// Reaction display state
+const showReactionsEnabled = ref(true);
+const unwatchShowReactions = ref<(() => void) | null>(null);
 
 // Context window state
 const contextUsagePercent = ref(0);
@@ -435,6 +439,7 @@ async function sendWithExistingMessages(): Promise<void> {
   openaiTools.push(...skillTools);
 
   try {
+    browser.runtime.sendMessage({ type: 'STREAM_START', sessionId: currentSession.value?.id }).catch(() => {});
     await runStream(provider, messages.value.slice(0, -1), {
       abortSignal: chatAbortController.value.signal,
       tools: openaiTools,
@@ -452,6 +457,7 @@ async function sendWithExistingMessages(): Promise<void> {
         });
         triggerRef(messages);
         if (soundEffectsEnabled.value) playErrorSound();
+        browser.runtime.sendMessage({ type: 'STREAMING_ERROR' }).catch(() => {});
       },
       onAborted: () => {},
     });
@@ -467,6 +473,7 @@ async function sendWithExistingMessages(): Promise<void> {
     await saveCurrentSession();
     updateContextUsage();
     scrollToBottom();
+    browser.runtime.sendMessage({ type: 'STREAMING_END' }).catch(() => {});
   }
 }
 
@@ -1181,6 +1188,7 @@ async function sendMessage() {
         });
         triggerRef(messages);
         if (soundEffectsEnabled.value) playErrorSound();
+        browser.runtime.sendMessage({ type: 'STREAMING_ERROR' }).catch(() => {});
       },
       onAborted: () => {},
     });
@@ -1197,13 +1205,28 @@ async function sendMessage() {
     updateContextUsage();
     scrollToBottom();
     if (soundEffectsEnabled.value) playReceivedSound();
+    browser.runtime.sendMessage({ type: 'STREAMING_END' }).catch(() => {});
   }
+}
+
+function handleMessageReaction(index: number, reaction: 'good' | 'bad'): void {
+  const message = messages.value[index];
+  if (!message || message.role !== 'assistant') return;
+  // Toggle reaction: if same reaction clicked, remove it
+  if (message.reaction === reaction) {
+    message.reaction = undefined;
+  } else {
+    message.reaction = reaction;
+  }
+  triggerRef(messages);
+  debouncedSave();
 }
 
 function terminateCurrentGeneration(): void {
   if (!chatAbortController.value) return;
   chatAbortController.value.abort();
   isLoading.value = false;
+  browser.runtime.sendMessage({ type: 'STREAMING_END' }).catch(() => {});
 }
 
 // ============================================================
@@ -1786,6 +1809,13 @@ onMounted(async () => {
   unwatchSoundEffects.value = watchSoundEffects((enabled) => {
     soundEffectsEnabled.value = enabled;
   });
+
+  // Load reactions display setting
+  showReactionsEnabled.value = await getShowReactions();
+
+  unwatchShowReactions.value = watchShowReactions((enabled) => {
+    showReactionsEnabled.value = enabled;
+  });
 });
 
 onUnmounted(() => {
@@ -1807,6 +1837,7 @@ onUnmounted(() => {
   unwatchSelectionQuoteEnabled.value?.();
   unwatchMcpServers.value?.();
   unwatchSoundEffects.value?.();
+  unwatchShowReactions.value?.();
   systemThemeMediaQuery.value?.removeEventListener('change', handleSystemThemeChange);
   mcpManager.disconnectAll().catch(() => {});
   if (markdownActionClickHandler) document.removeEventListener('click', markdownActionClickHandler);
@@ -2003,6 +2034,7 @@ onUnmounted(() => {
         :editing-text="editingMessageText"
         :copied="copiedMessageIndex === index"
         :reasoning-expanded="!!reasoningExpanded[index]"
+        :show-reactions="showReactionsEnabled"
         @edit="startEditMessage"
         @cancel-edit="cancelEditMessage"
         @save-edit="saveEditMessage"
@@ -2013,6 +2045,7 @@ onUnmounted(() => {
         @toggle-reasoning="(i) => reasoningExpanded[i] = !reasoningExpanded[i]"
         @open-lightbox="openLightbox"
         @copy-error="(rawError) => { writeTextToClipboard(rawError).then((ok) => { if (ok) showToast('Error details copied'); }); }"
+        @react="handleMessageReaction"
       />
 
       <!-- Scroll to bottom button -->
@@ -2263,7 +2296,25 @@ onUnmounted(() => {
   padding: var(--spacing-md);
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-md);
+  gap: 0;
+}
+
+/* Add visual grouping: gap after assistant message before next user message */
+.chat-area > :deep(.message-wrapper.message-assistant) {
+  margin-bottom: var(--spacing-lg);
+}
+
+/* Small gap between messages in same pair */
+.chat-area > :deep(.message-wrapper.message-user) {
+  margin-bottom: var(--spacing-xs);
+}
+
+.chat-area > :deep(.message-wrapper.message-assistant:last-child) {
+  margin-bottom: 0;
+}
+
+.chat-area > :deep(.message-wrapper.message-user:last-child) {
+  margin-bottom: 0;
 }
 
 /* Empty state */

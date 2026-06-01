@@ -364,6 +364,7 @@ const fontScale = ref(1.0);
 const floatingBallEnabled = ref(true);
 const selectionQuoteEnabled = ref(true);
 const soundEffectsEnabled = ref(false);
+const showReactionsEnabled = ref(true);
 
 async function changeFontScale() {
   await setFontScale(fontScale.value);
@@ -380,6 +381,11 @@ async function changeSelectionQuote() {
 async function changeSoundEffects() {
   const { setSoundEffects } = await import('../../utils/storage');
   await setSoundEffects(soundEffectsEnabled.value);
+}
+
+async function changeShowReactions() {
+  const { setShowReactions } = await import('../../utils/storage');
+  await setShowReactions(showReactionsEnabled.value);
 }
 
 // ============================================================
@@ -798,8 +804,9 @@ onMounted(async () => {
   fontScale.value = await getFontScale();
   floatingBallEnabled.value = await getFloatingBallEnabled();
   selectionQuoteEnabled.value = await getSelectionQuoteEnabled();
-  const { getSoundEffects } = await import('../../utils/storage');
+  const { getSoundEffects, getShowReactions } = await import('../../utils/storage');
   soundEffectsEnabled.value = await getSoundEffects();
+  showReactionsEnabled.value = await getShowReactions();
 
   // AI settings
   pageContentMaxLength.value = await getPageContentMaxLength();
@@ -1069,6 +1076,14 @@ onMounted(async () => {
           <label class="toggle-label">
             <input type="checkbox" v-model="soundEffectsEnabled" @change="changeSoundEffects" />
             <span>{{ i18n(currentLanguage, 'appearance.soundEffectsDesc') }}</span>
+          </label>
+        </div>
+
+        <div class="settings-section">
+          <h3>Show message reactions</h3>
+          <label class="toggle-label">
+            <input type="checkbox" v-model="showReactionsEnabled" @change="changeShowReactions" />
+            <span>Show thumbs up/down buttons on AI messages for local feedback</span>
           </label>
         </div>
       </div>
