@@ -3,6 +3,8 @@
  * User drags to select a rectangular area, then the area is cropped and sent to AI.
  */
 
+import { t, type Language } from '../../utils/i18n';
+
 const OVERLAY_HOST_ID = 'nexus-screenshot-overlay-host';
 const OVERLAY_Z_INDEX = '2147483647';
 
@@ -176,9 +178,7 @@ export function startOverlay(options: OverlayOptions): void {
   // Hint text
   const hint = document.createElement('div');
   hint.className = 'nexus-overlay-hint';
-  hint.textContent = lang === 'zh-CN'
-    ? '拖拽选择区域 / 按 Esc 取消'
-    : 'Drag to select area / Press Esc to cancel';
+  hint.textContent = t(lang, 'overlay.dragSelect');
   overlay.appendChild(hint);
 
   // Size label

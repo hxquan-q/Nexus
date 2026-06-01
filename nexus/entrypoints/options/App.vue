@@ -30,10 +30,10 @@ import {
   getDefaultShortcuts,
   type StoredProvider,
   type ThemeMode,
-  type Language,
   type PresetAction,
   type ShortcutBinding,
 } from '../../utils/storage';
+import { t as i18n, type Language } from '../../utils/i18n';
 import { fetchModels } from '../../utils/api';
 import type { ProviderType } from '../../utils/providers/types';
 import {
@@ -82,16 +82,16 @@ type TabId =
 
 const activeTab = ref<TabId>('providers');
 
-const navItems: { id: TabId; label: string; icon: string }[] = [
-  { id: 'providers', label: 'Providers', icon: 'cpu' },
-  { id: 'appearance', label: 'Appearance', icon: 'palette' },
-  { id: 'ai-settings', label: 'AI Settings', icon: 'sliders' },
-  { id: 'mcp', label: 'MCP Servers', icon: 'network' },
-  { id: 'skills', label: 'Skills', icon: 'zap' },
-  { id: 'shortcuts', label: 'Shortcuts', icon: 'keyboard' },
-  { id: 'presets', label: 'Quick Actions', icon: 'bolt' },
-  { id: 'data', label: 'Data', icon: 'database' },
-  { id: 'language', label: 'Language', icon: 'globe' },
+const navItems: { id: TabId; labelKey: string; icon: string }[] = [
+  { id: 'providers', labelKey: 'nav.providers', icon: 'cpu' },
+  { id: 'appearance', labelKey: 'nav.appearance', icon: 'palette' },
+  { id: 'ai-settings', labelKey: 'nav.aiSettings', icon: 'sliders' },
+  { id: 'mcp', labelKey: 'nav.mcp', icon: 'network' },
+  { id: 'skills', labelKey: 'nav.skills', icon: 'zap' },
+  { id: 'shortcuts', labelKey: 'nav.shortcuts', icon: 'keyboard' },
+  { id: 'presets', labelKey: 'nav.presets', icon: 'bolt' },
+  { id: 'data', labelKey: 'nav.data', icon: 'database' },
+  { id: 'language', labelKey: 'nav.language', icon: 'globe' },
 ];
 
 // ============================================================
@@ -178,7 +178,7 @@ async function saveProviderForm() {
 }
 
 async function removeProvider(id: string) {
-  if (!confirm('Delete this provider?')) return;
+  if (!confirm(i18n(currentLanguage.value, 'providers.deleteConfirm'))) return;
   await deleteProviderFromStorage(id);
   providers.value = await getAllProviders();
   if (activeProviderId.value === id) {
@@ -333,7 +333,7 @@ async function saveMcpServerForm() {
 }
 
 async function removeMcpServer(id: string) {
-  if (!confirm('Delete this MCP server?')) return;
+  if (!confirm(i18n(currentLanguage.value, 'mcp.deleteConfirm'))) return;
   try {
     await mcpManager.disconnect(id);
   } catch {
@@ -364,7 +364,7 @@ async function testMcpConnection() {
   } catch (error) {
     mcpTestResult.value = {
       success: false,
-      message: error instanceof Error ? error.message : 'Connection failed',
+      message: error instanceof Error ? error.message : i18n(currentLanguage.value, 'mcp.connectionFailed'),
       toolCount: 0,
     };
   } finally {
@@ -401,7 +401,7 @@ async function handleSkillImport(event: Event) {
 }
 
 async function removeSkill(id: string) {
-  if (!confirm('Delete this skill?')) return;
+  if (!confirm(i18n(currentLanguage.value, 'skills.deleteConfirm'))) return;
   await deleteSkillFromDb(id);
   await refreshSkills();
 }
@@ -418,7 +418,7 @@ const shortcuts = ref<ShortcutBinding[]>([]);
 const rebindingAction = ref<string | null>(null);
 
 async function resetShortcuts() {
-  if (!confirm('Reset all shortcuts to defaults?')) return;
+  if (!confirm(i18n(currentLanguage.value, 'shortcuts.resetConfirm'))) return;
   shortcuts.value = getDefaultShortcuts();
   await saveShortcuts(shortcuts.value);
 }
@@ -539,7 +539,7 @@ async function exportAllAsJson() {
     const data = await exportAllSessions();
     downloadAsJson(data);
   } catch (error) {
-    alert(`Export failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    alert(i18n(currentLanguage.value, 'data.exportFailed', { error: error instanceof Error ? error.message : 'Unknown error' }));
   } finally {
     dataExporting.value = false;
   }
@@ -551,12 +551,12 @@ async function exportAllAsZip() {
     const { getAllSessions } = await import('../../utils/db');
     const sessions = await getAllSessions();
     if (sessions.length === 0) {
-      alert('No sessions to export');
+      alert(i18n(currentLanguage.value, 'data.noSessionsExport'));
       return;
     }
     await downloadMultipleAsZip(sessions);
   } catch (error) {
-    alert(`Export failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    alert(i18n(currentLanguage.value, 'data.exportFailed', { error: error instanceof Error ? error.message : 'Unknown error' }));
   } finally {
     dataExporting.value = false;
   }
@@ -572,13 +572,13 @@ async function handleImportFile(event: Event) {
     const data = await readImportFile(file);
     const validation = validateImportData(data);
     if (!validation.valid) {
-      alert(`Invalid import file:\n${validation.errors.join('\n')}`);
+      alert(`${i18n(currentLanguage.value, 'data.invalidFile')}:\n${validation.errors.join('\n')}`);
       return;
     }
     importFileData.value = data;
     importPreviewData.value = previewImport(data);
   } catch (error) {
-    alert(`Failed to read import file: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    alert(i18n(currentLanguage.value, 'data.failedRead', { error: error instanceof Error ? error.message : 'Unknown error' }));
   } finally {
     dataImporting.value = false;
     input.value = '';
@@ -590,19 +590,19 @@ async function confirmImport(mode: 'merge' | 'replace') {
 
   const confirmMsg =
     mode === 'replace'
-      ? 'This will DELETE all existing chats and replace with imported data. Are you sure?'
-      : 'This will add imported chats alongside your existing ones. Continue?';
+      ? i18n(currentLanguage.value, 'data.replaceConfirm')
+      : i18n(currentLanguage.value, 'data.mergeConfirm');
 
   if (!confirm(confirmMsg)) return;
 
   dataImporting.value = true;
   try {
     const count = await importSessions(importFileData.value, mode);
-    alert(`Successfully imported ${count} session(s)`);
+    alert(i18n(currentLanguage.value, 'data.importSuccess', { count }));
     importFileData.value = null;
     importPreviewData.value = null;
   } catch (error) {
-    alert(`Import failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    alert(i18n(currentLanguage.value, 'data.importFailed', { error: error instanceof Error ? error.message : 'Unknown error' }));
   } finally {
     dataImporting.value = false;
   }
@@ -614,14 +614,14 @@ function cancelImport() {
 }
 
 async function clearAllData() {
-  if (!confirm('This will permanently delete ALL your chat history. Are you sure?')) return;
-  if (!confirm('This action cannot be undone. Really delete everything?')) return;
+  if (!confirm(i18n(currentLanguage.value, 'data.clearConfirm1'))) return;
+  if (!confirm(i18n(currentLanguage.value, 'data.clearConfirm2'))) return;
 
   const sessions = await getAllSessions();
   for (const s of sessions) {
     await deleteSession(s.id);
   }
-  alert('All chat data has been cleared.');
+  alert(i18n(currentLanguage.value, 'data.cleared'));
 }
 
 // ============================================================
@@ -671,7 +671,7 @@ onMounted(async () => {
     <nav class="sidebar">
       <div class="sidebar-logo">
         <h2>Nexus</h2>
-        <span class="sidebar-version">Settings</span>
+        <span class="sidebar-version">{{ i18n(currentLanguage, 'options.settings') }}</span>
       </div>
       <button
         v-for="item in navItems"
@@ -680,7 +680,7 @@ onMounted(async () => {
         :class="{ active: activeTab === item.id }"
         @click="activeTab = item.id"
       >
-        {{ item.label }}
+        {{ i18n(currentLanguage, item.labelKey) }}
       </button>
     </nav>
 
@@ -689,13 +689,13 @@ onMounted(async () => {
       <!-- ==================== Providers ==================== -->
       <div v-if="activeTab === 'providers'">
         <div class="content-header">
-          <h1>AI Providers</h1>
-          <button class="btn-primary" @click="startAddProvider">Add Provider</button>
+          <h1>{{ i18n(currentLanguage, 'providers.title') }}</h1>
+          <button class="btn-primary" @click="startAddProvider">{{ i18n(currentLanguage, 'providers.add') }}</button>
         </div>
 
         <div class="provider-list">
           <div v-if="providers.length === 0" class="empty-state">
-            <p>No providers configured. Add one to get started.</p>
+            <p>{{ i18n(currentLanguage, 'providers.noProviders') }}</p>
           </div>
 
           <div
@@ -708,10 +708,10 @@ onMounted(async () => {
               <div class="provider-header">
                 <span class="provider-name">{{ provider.name }}</span>
                 <span class="provider-type-badge">{{ provider.type }}</span>
-                <span v-if="activeProviderId === provider.id" class="provider-active-badge">Active</span>
+                <span v-if="activeProviderId === provider.id" class="provider-active-badge">{{ i18n(currentLanguage, 'options.active') }}</span>
               </div>
               <div class="provider-details">
-                <span>Model: {{ provider.selectedModel || 'None' }}</span>
+                <span>{{ i18n(currentLanguage, 'providers.model') }}: {{ provider.selectedModel || i18n(currentLanguage, 'providers.none') }}</span>
                 <span>Base URL: {{ provider.baseUrl }}</span>
               </div>
             </div>
@@ -721,10 +721,10 @@ onMounted(async () => {
                 class="btn-secondary"
                 @click="activateProvider(provider.id)"
               >
-                Activate
+                {{ i18n(currentLanguage, 'options.activate') }}
               </button>
-              <button class="btn-ghost" @click="startEditProvider(provider)">Edit</button>
-              <button class="btn-danger" @click="removeProvider(provider.id)">Delete</button>
+              <button class="btn-ghost" @click="startEditProvider(provider)">{{ i18n(currentLanguage, 'options.edit') }}</button>
+              <button class="btn-danger" @click="removeProvider(provider.id)">{{ i18n(currentLanguage, 'options.delete') }}</button>
             </div>
           </div>
         </div>
@@ -732,15 +732,15 @@ onMounted(async () => {
         <!-- Add/Edit Provider Modal -->
         <div v-if="showAddProvider" class="modal-overlay" @click="cancelEdit">
           <div class="modal" @click.stop>
-            <h2>{{ editingProvider ? 'Edit Provider' : 'Add Provider' }}</h2>
+            <h2>{{ editingProvider ? i18n(currentLanguage, 'providers.edit') : i18n(currentLanguage, 'providers.add') }}</h2>
 
             <div class="form-group">
-              <label>Name</label>
-              <input v-model="formProvider.name" type="text" placeholder="e.g., My OpenAI" />
+              <label>{{ i18n(currentLanguage, 'providers.name') }}</label>
+              <input v-model="formProvider.name" type="text" :placeholder="i18n(currentLanguage, 'providers.namePlaceholder')" />
             </div>
 
             <div class="form-group">
-              <label>Type</label>
+              <label>{{ i18n(currentLanguage, 'providers.type') }}</label>
               <select v-model="formProvider.type" @change="updateBaseUrlFromType">
                 <option v-for="pt in providerTypes" :key="pt.value" :value="pt.value">
                   {{ pt.label }}
@@ -749,22 +749,22 @@ onMounted(async () => {
             </div>
 
             <div class="form-group">
-              <label>Base URL</label>
+              <label>{{ i18n(currentLanguage, 'providers.baseUrl') }}</label>
               <input v-model="formProvider.baseUrl" type="text" placeholder="https://api.openai.com/v1" />
             </div>
 
             <div class="form-group">
-              <label>API Key</label>
+              <label>{{ i18n(currentLanguage, 'providers.apiKey') }}</label>
               <input v-model="formProvider.apiKey" type="password" placeholder="sk-..." />
             </div>
 
             <div class="form-group">
-              <label>Models</label>
+              <label>{{ i18n(currentLanguage, 'providers.models') }}</label>
               <div class="model-input-row">
                 <input
                   v-model="formProvider.selectedModel"
                   type="text"
-                  placeholder="Model ID (e.g., gpt-4o)"
+                  :placeholder="i18n(currentLanguage, 'providers.selectedModel')"
                   class="model-input"
                 />
                 <button
@@ -772,7 +772,7 @@ onMounted(async () => {
                   :disabled="loadingModels || !formProvider.baseUrl || !formProvider.apiKey"
                   @click="fetchModelsForProvider"
                 >
-                  {{ loadingModels ? 'Loading...' : 'Fetch' }}
+                  {{ loadingModels ? i18n(currentLanguage, 'options.loading') : i18n(currentLanguage, 'providers.fetchModels') }}
                 </button>
               </div>
               <div v-if="formProvider.models.length > 0" class="model-tags">
@@ -788,15 +788,15 @@ onMounted(async () => {
                     class="vision-toggle"
                     :class="{ active: formProvider.visionModels.includes(model) }"
                     @click.stop="toggleModelVision(model)"
-                    title="Toggle vision support"
+                    :title="i18n(currentLanguage, 'providers.vision')"
                   >V</span>
                 </button>
               </div>
             </div>
 
             <div class="form-actions">
-              <button class="btn-ghost" @click="cancelEdit">Cancel</button>
-              <button class="btn-primary" @click="saveProviderForm">Save</button>
+              <button class="btn-ghost" @click="cancelEdit">{{ i18n(currentLanguage, 'options.cancel') }}</button>
+              <button class="btn-primary" @click="saveProviderForm">{{ i18n(currentLanguage, 'options.save') }}</button>
             </div>
           </div>
         </div>
@@ -805,11 +805,11 @@ onMounted(async () => {
       <!-- ==================== Appearance ==================== -->
       <div v-if="activeTab === 'appearance'">
         <div class="content-header">
-          <h1>Appearance</h1>
+          <h1>{{ i18n(currentLanguage, 'appearance.title') }}</h1>
         </div>
 
         <div class="settings-section">
-          <h3>Theme</h3>
+          <h3>{{ i18n(currentLanguage, 'appearance.theme') }}</h3>
           <div class="theme-options">
             <button
               v-for="mode in (['light', 'dark', 'system'] as ThemeMode[])"
@@ -818,13 +818,13 @@ onMounted(async () => {
               :class="{ active: currentTheme === mode }"
               @click="changeTheme(mode)"
             >
-              {{ mode.charAt(0).toUpperCase() + mode.slice(1) }}
+              {{ i18n(currentLanguage, `appearance.${mode}`) }}
             </button>
           </div>
         </div>
 
         <div class="settings-section">
-          <h3>UI Font Scale</h3>
+          <h3>{{ i18n(currentLanguage, 'appearance.fontScale') }}</h3>
           <div class="slider-row">
             <input
               type="range"
@@ -840,18 +840,18 @@ onMounted(async () => {
         </div>
 
         <div class="settings-section">
-          <h3>Floating Ball</h3>
+          <h3>{{ i18n(currentLanguage, 'appearance.floatingBall') }}</h3>
           <label class="toggle-label">
             <input type="checkbox" v-model="floatingBallEnabled" @change="changeFloatingBall" />
-            <span>Show floating trigger ball on pages</span>
+            <span>{{ i18n(currentLanguage, 'appearance.floatingBallDesc') }}</span>
           </label>
         </div>
 
         <div class="settings-section">
-          <h3>Selection Quote</h3>
+          <h3>{{ i18n(currentLanguage, 'appearance.selectionQuote') }}</h3>
           <label class="toggle-label">
             <input type="checkbox" v-model="selectionQuoteEnabled" @change="changeSelectionQuote" />
-            <span>Enable text selection quote in sidepanel</span>
+            <span>{{ i18n(currentLanguage, 'appearance.selectionQuoteDesc') }}</span>
           </label>
         </div>
       </div>
@@ -859,12 +859,12 @@ onMounted(async () => {
       <!-- ==================== AI Settings ==================== -->
       <div v-if="activeTab === 'ai-settings'">
         <div class="content-header">
-          <h1>AI Settings</h1>
+          <h1>{{ i18n(currentLanguage, 'aiSettings.title') }}</h1>
         </div>
 
         <div class="settings-section">
-          <h3>Page Content Max Length</h3>
-          <p class="setting-desc">Maximum characters to extract from web pages.</p>
+          <h3>{{ i18n(currentLanguage, 'aiSettings.pageContentMax') }}</h3>
+          <p class="setting-desc">{{ i18n(currentLanguage, 'aiSettings.pageContentDesc') }}</p>
           <div class="slider-row">
             <input
               type="range"
@@ -880,8 +880,8 @@ onMounted(async () => {
         </div>
 
         <div class="settings-section">
-          <h3>Max Tool Calls Per Turn</h3>
-          <p class="setting-desc">Maximum number of tool calls the AI can make in a single response.</p>
+          <h3>{{ i18n(currentLanguage, 'aiSettings.maxToolCalls') }}</h3>
+          <p class="setting-desc">{{ i18n(currentLanguage, 'aiSettings.maxToolCallsDesc') }}</p>
           <div class="number-input-row">
             <input
               type="number"
@@ -895,8 +895,8 @@ onMounted(async () => {
         </div>
 
         <div class="settings-section">
-          <h3>Raw Extraction Sites</h3>
-          <p class="setting-desc">Sites where Readability is bypassed for content extraction.</p>
+          <h3>{{ i18n(currentLanguage, 'aiSettings.rawExtractSites') }}</h3>
+          <p class="setting-desc">{{ i18n(currentLanguage, 'aiSettings.rawExtractDesc') }}</p>
           <div class="list-editor">
             <div v-for="(site, index) in rawExtractionSites" :key="index" class="list-item">
               <span class="list-item-text">{{ site }}</span>
@@ -910,7 +910,7 @@ onMounted(async () => {
                 class="list-add-input"
                 @keydown.enter="addRawExtractionSite"
               />
-              <button class="btn-secondary" @click="addRawExtractionSite">Add</button>
+              <button class="btn-secondary" @click="addRawExtractionSite">{{ i18n(currentLanguage, 'aiSettings.addSite') }}</button>
             </div>
           </div>
         </div>
@@ -919,13 +919,13 @@ onMounted(async () => {
       <!-- ==================== MCP Servers ==================== -->
       <div v-if="activeTab === 'mcp'">
         <div class="content-header">
-          <h1>MCP Servers</h1>
-          <button class="btn-primary" @click="startAddMcpServer">Add Server</button>
+          <h1>{{ i18n(currentLanguage, 'mcp.title') }}</h1>
+          <button class="btn-primary" @click="startAddMcpServer">{{ i18n(currentLanguage, 'mcp.add') }}</button>
         </div>
 
         <div class="provider-list">
           <div v-if="mcpServers.length === 0" class="empty-state">
-            <p>No MCP servers configured.</p>
+            <p>{{ i18n(currentLanguage, 'mcp.noServers') }}</p>
           </div>
 
           <div v-for="server in mcpServers" :key="server.id" class="provider-card">
@@ -942,12 +942,12 @@ onMounted(async () => {
                 </label>
               </div>
               <div class="provider-details">
-                <span>URL: {{ server.url }}</span>
+                <span>{{ i18n(currentLanguage, 'mcp.url') }}: {{ server.url }}</span>
               </div>
             </div>
             <div class="provider-actions">
-              <button class="btn-ghost" @click="startEditMcpServer(server)">Edit</button>
-              <button class="btn-danger" @click="removeMcpServer(server.id)">Delete</button>
+              <button class="btn-ghost" @click="startEditMcpServer(server)">{{ i18n(currentLanguage, 'options.edit') }}</button>
+              <button class="btn-danger" @click="removeMcpServer(server.id)">{{ i18n(currentLanguage, 'options.delete') }}</button>
             </div>
           </div>
         </div>
@@ -955,29 +955,29 @@ onMounted(async () => {
         <!-- Add/Edit MCP Modal -->
         <div v-if="showMcpForm" class="modal-overlay" @click="cancelMcpForm">
           <div class="modal" @click.stop>
-            <h2>{{ editingMcpServer ? 'Edit MCP Server' : 'Add MCP Server' }}</h2>
+            <h2>{{ editingMcpServer ? i18n(currentLanguage, 'mcp.edit') : i18n(currentLanguage, 'mcp.add') }}</h2>
 
             <div class="form-group">
-              <label>Name</label>
+              <label>{{ i18n(currentLanguage, 'mcp.serverName') }}</label>
               <input v-model="formMcpServer.name" type="text" placeholder="e.g., My MCP Server" />
             </div>
 
             <div class="form-group">
-              <label>URL</label>
+              <label>{{ i18n(currentLanguage, 'mcp.serverUrl') }}</label>
               <input v-model="formMcpServer.url" type="text" placeholder="http://localhost:3000/mcp" />
             </div>
 
             <div class="form-group">
-              <label>Authentication</label>
+              <label>{{ i18n(currentLanguage, 'mcp.auth') }}</label>
               <select v-model="formMcpServer.authType">
-                <option value="none">None</option>
-                <option value="bearer">Bearer Token</option>
-                <option value="oauth">OAuth 2.1</option>
+                <option value="none">{{ i18n(currentLanguage, 'mcp.authNone') }}</option>
+                <option value="bearer">{{ i18n(currentLanguage, 'mcp.authBearer') }}</option>
+                <option value="oauth">{{ i18n(currentLanguage, 'mcp.authOAuth') }}</option>
               </select>
             </div>
 
             <div v-if="formMcpServer.authType === 'bearer'" class="form-group">
-              <label>Bearer Token</label>
+              <label>{{ i18n(currentLanguage, 'mcp.authBearerToken') }}</label>
               <input v-model="formMcpServer.authToken" type="password" placeholder="Token..." />
             </div>
 
@@ -987,15 +987,15 @@ onMounted(async () => {
                 :disabled="mcpConnecting || !formMcpServer.url"
                 @click="testMcpConnection"
               >
-                {{ mcpConnecting ? 'Testing...' : 'Test Connection' }}
+                {{ mcpConnecting ? i18n(currentLanguage, 'mcp.testing') : i18n(currentLanguage, 'mcp.testConnection') }}
               </button>
-              <button class="btn-ghost" @click="cancelMcpForm">Cancel</button>
-              <button class="btn-primary" @click="saveMcpServerForm">Save</button>
+              <button class="btn-ghost" @click="cancelMcpForm">{{ i18n(currentLanguage, 'options.cancel') }}</button>
+              <button class="btn-primary" @click="saveMcpServerForm">{{ i18n(currentLanguage, 'options.save') }}</button>
             </div>
 
             <div v-if="mcpTestResult" class="test-result" :class="{ success: mcpTestResult.success, error: !mcpTestResult.success }">
               {{ mcpTestResult.message }}
-              <span v-if="mcpTestResult.success"> ({{ mcpTestResult.toolCount }} tools discovered)</span>
+              <span v-if="mcpTestResult.success"> ({{ i18n(currentLanguage, 'mcp.toolsDiscovered', { count: mcpTestResult.toolCount }) }})</span>
             </div>
           </div>
         </div>
@@ -1004,9 +1004,9 @@ onMounted(async () => {
       <!-- ==================== Skills ==================== -->
       <div v-if="activeTab === 'skills'">
         <div class="content-header">
-          <h1>Agent Skills</h1>
+          <h1>{{ i18n(currentLanguage, 'skills.title') }}</h1>
           <label class="btn-primary import-btn">
-            Import Skill (.zip)
+            {{ i18n(currentLanguage, 'skills.import') }}
             <input
               type="file"
               accept=".zip,.json,.md"
@@ -1019,7 +1019,7 @@ onMounted(async () => {
 
         <div class="provider-list">
           <div v-if="skills.length === 0" class="empty-state">
-            <p>No skills installed. Import a skill to get started.</p>
+            <p>{{ i18n(currentLanguage, 'skills.noSkills') }}</p>
           </div>
 
           <div v-for="skill in skills" :key="skill.id" class="provider-card">
@@ -1035,8 +1035,8 @@ onMounted(async () => {
               </div>
             </div>
             <div class="provider-actions">
-              <button class="btn-ghost" @click="viewSkillDetail(skill)">Details</button>
-              <button class="btn-danger" @click="removeSkill(skill.id)">Delete</button>
+              <button class="btn-ghost" @click="viewSkillDetail(skill)">{{ i18n(currentLanguage, 'skills.details') }}</button>
+              <button class="btn-danger" @click="removeSkill(skill.id)">{{ i18n(currentLanguage, 'options.delete') }}</button>
             </div>
           </div>
         </div>
@@ -1048,26 +1048,26 @@ onMounted(async () => {
             <p class="skill-detail-desc">{{ skillViewDetail.metadata.description }}</p>
 
             <div class="skill-section">
-              <h4>Instructions</h4>
+              <h4>{{ i18n(currentLanguage, 'skills.instructions') }}</h4>
               <pre class="skill-pre">{{ skillViewDetail.instructions }}</pre>
             </div>
 
             <div v-if="skillViewDetail.scripts.length > 0" class="skill-section">
-              <h4>Scripts</h4>
+              <h4>{{ i18n(currentLanguage, 'skills.scripts') }}</h4>
               <div v-for="script in skillViewDetail.scripts" :key="script.path" class="skill-file-item">
                 {{ script.name }}
               </div>
             </div>
 
             <div v-if="skillViewDetail.references.length > 0" class="skill-section">
-              <h4>References</h4>
+              <h4>{{ i18n(currentLanguage, 'skills.references') }}</h4>
               <div v-for="ref in skillViewDetail.references" :key="ref.path" class="skill-file-item">
                 {{ ref.path }}
               </div>
             </div>
 
             <div class="form-actions">
-              <button class="btn-ghost" @click="skillViewDetail = null">Close</button>
+              <button class="btn-ghost" @click="skillViewDetail = null">{{ i18n(currentLanguage, 'options.close') }}</button>
             </div>
           </div>
         </div>
@@ -1076,8 +1076,8 @@ onMounted(async () => {
       <!-- ==================== Shortcuts ==================== -->
       <div v-if="activeTab === 'shortcuts'">
         <div class="content-header">
-          <h1>Keyboard Shortcuts</h1>
-          <button class="btn-secondary" @click="resetShortcuts">Reset to Defaults</button>
+          <h1>{{ i18n(currentLanguage, 'shortcuts.title') }}</h1>
+          <button class="btn-secondary" @click="resetShortcuts">{{ i18n(currentLanguage, 'shortcuts.resetDefaults') }}</button>
         </div>
 
         <div class="settings-section">
@@ -1088,7 +1088,7 @@ onMounted(async () => {
               :class="{ rebinding: rebindingAction === shortcut.action }"
               @click="startRebind(shortcut.action)"
             >
-              <template v-if="rebindingAction === shortcut.action">Press keys...</template>
+              <template v-if="rebindingAction === shortcut.action">{{ i18n(currentLanguage, 'shortcuts.pressKeys') }}</template>
               <template v-else>{{ shortcut.key }}</template>
             </button>
           </div>
@@ -1098,13 +1098,13 @@ onMounted(async () => {
       <!-- ==================== Quick Actions ==================== -->
       <div v-if="activeTab === 'presets'">
         <div class="content-header">
-          <h1>Quick Action Presets</h1>
-          <button class="btn-primary" @click="startAddPreset">Add Preset</button>
+          <h1>{{ i18n(currentLanguage, 'presets.title') }}</h1>
+          <button class="btn-primary" @click="startAddPreset">{{ i18n(currentLanguage, 'presets.add') }}</button>
         </div>
 
         <div class="provider-list">
           <div v-if="presets.length === 0" class="empty-state">
-            <p>No quick action presets configured.</p>
+            <p>{{ i18n(currentLanguage, 'presets.noPresets') }}</p>
           </div>
 
           <div v-for="(preset, index) in presets" :key="preset.id" class="provider-card">
@@ -1117,10 +1117,10 @@ onMounted(async () => {
               </div>
             </div>
             <div class="provider-actions">
-              <button class="btn-ghost" @click="movePresetUp(index)" :disabled="index === 0">Up</button>
-              <button class="btn-ghost" @click="movePresetDown(index)" :disabled="index === presets.length - 1">Down</button>
-              <button class="btn-ghost" @click="startEditPreset(preset)">Edit</button>
-              <button class="btn-danger" @click="removePreset(preset.id)">Delete</button>
+              <button class="btn-ghost" @click="movePresetUp(index)" :disabled="index === 0">{{ i18n(currentLanguage, 'presets.moveUp') }}</button>
+              <button class="btn-ghost" @click="movePresetDown(index)" :disabled="index === presets.length - 1">{{ i18n(currentLanguage, 'presets.moveDown') }}</button>
+              <button class="btn-ghost" @click="startEditPreset(preset)">{{ i18n(currentLanguage, 'options.edit') }}</button>
+              <button class="btn-danger" @click="removePreset(preset.id)">{{ i18n(currentLanguage, 'options.delete') }}</button>
             </div>
           </div>
         </div>
@@ -1128,26 +1128,26 @@ onMounted(async () => {
         <!-- Add/Edit Preset Modal -->
         <div v-if="showPresetForm" class="modal-overlay" @click="cancelPresetForm">
           <div class="modal" @click.stop>
-            <h2>{{ editingPreset ? 'Edit Preset' : 'Add Preset' }}</h2>
+            <h2>{{ editingPreset ? i18n(currentLanguage, 'presets.edit') : i18n(currentLanguage, 'presets.add') }}</h2>
 
             <div class="form-group">
-              <label>Name</label>
-              <input v-model="formPreset.name" type="text" placeholder="e.g., Summarize" />
+              <label>{{ i18n(currentLanguage, 'presets.name') }}</label>
+              <input v-model="formPreset.name" type="text" :placeholder="i18n(currentLanguage, 'presets.namePlaceholder')" />
             </div>
 
             <div class="form-group">
-              <label>Prompt Content</label>
+              <label>{{ i18n(currentLanguage, 'presets.content') }}</label>
               <textarea
                 v-model="formPreset.content"
                 class="preset-textarea"
-                placeholder="Enter the prompt text..."
+                :placeholder="i18n(currentLanguage, 'presets.contentPlaceholder')"
                 rows="4"
               ></textarea>
             </div>
 
             <div class="form-actions">
-              <button class="btn-ghost" @click="cancelPresetForm">Cancel</button>
-              <button class="btn-primary" @click="savePresetForm">Save</button>
+              <button class="btn-ghost" @click="cancelPresetForm">{{ i18n(currentLanguage, 'options.cancel') }}</button>
+              <button class="btn-primary" @click="savePresetForm">{{ i18n(currentLanguage, 'options.save') }}</button>
             </div>
           </div>
         </div>
@@ -1156,26 +1156,26 @@ onMounted(async () => {
       <!-- ==================== Data Management ==================== -->
       <div v-if="activeTab === 'data'">
         <div class="content-header">
-          <h1>Data Management</h1>
+          <h1>{{ i18n(currentLanguage, 'data.title') }}</h1>
         </div>
 
         <div class="settings-section">
-          <h3>Export</h3>
+          <h3>{{ i18n(currentLanguage, 'data.export') }}</h3>
           <div class="btn-group">
             <button class="btn-secondary" :disabled="dataExporting" @click="exportAllAsJson">
-              Export as JSON
+              {{ i18n(currentLanguage, 'data.exportJson') }}
             </button>
             <button class="btn-secondary" :disabled="dataExporting" @click="exportAllAsZip">
-              Export as ZIP
+              {{ i18n(currentLanguage, 'data.exportZip') }}
             </button>
           </div>
         </div>
 
         <div class="settings-section">
-          <h3>Import</h3>
+          <h3>{{ i18n(currentLanguage, 'data.import') }}</h3>
           <div v-if="!importFileData">
             <label class="btn-secondary import-btn">
-              Select JSON File
+              {{ i18n(currentLanguage, 'data.selectFile') }}
               <input
                 type="file"
                 accept=".json"
@@ -1187,34 +1187,34 @@ onMounted(async () => {
           </div>
           <div v-else class="import-preview">
             <div class="import-preview-stats">
-              <span><strong>{{ importPreviewData?.sessionCount }}</strong> sessions</span>
-              <span><strong>{{ importPreviewData?.totalMessages }}</strong> messages</span>
+              <span><strong>{{ importPreviewData?.sessionCount }}</strong> {{ i18n(currentLanguage, 'data.sessions') }}</span>
+              <span><strong>{{ importPreviewData?.totalMessages }}</strong> {{ i18n(currentLanguage, 'data.messages') }}</span>
             </div>
             <div class="btn-group">
-              <button class="btn-primary" @click="confirmImport('merge')">Merge</button>
-              <button class="btn-danger" @click="confirmImport('replace')">Replace All</button>
-              <button class="btn-ghost" @click="cancelImport">Cancel</button>
+              <button class="btn-primary" @click="confirmImport('merge')">{{ i18n(currentLanguage, 'data.merge') }}</button>
+              <button class="btn-danger" @click="confirmImport('replace')">{{ i18n(currentLanguage, 'data.replaceAll') }}</button>
+              <button class="btn-ghost" @click="cancelImport">{{ i18n(currentLanguage, 'options.cancel') }}</button>
             </div>
           </div>
         </div>
 
         <div class="settings-section danger-zone">
-          <h3>Clear All Data</h3>
-          <p class="setting-desc">Permanently delete all chat history. This cannot be undone.</p>
-          <button class="btn-danger" @click="clearAllData">Clear All Data</button>
+          <h3>{{ i18n(currentLanguage, 'data.clearAll') }}</h3>
+          <p class="setting-desc">{{ i18n(currentLanguage, 'data.clearAllDesc') }}</p>
+          <button class="btn-danger" @click="clearAllData">{{ i18n(currentLanguage, 'data.clearAll') }}</button>
         </div>
       </div>
 
       <!-- ==================== Language ==================== -->
       <div v-if="activeTab === 'language'">
         <div class="content-header">
-          <h1>Language</h1>
+          <h1>{{ i18n(currentLanguage, 'language.title') }}</h1>
         </div>
 
         <div class="settings-section">
           <select v-model="currentLanguage" @change="changeLanguage(currentLanguage)" class="language-select">
-            <option value="en">English</option>
-            <option value="zh-CN">Chinese (Simplified)</option>
+            <option value="en">{{ i18n(currentLanguage, 'language.english') }}</option>
+            <option value="zh-CN">{{ i18n(currentLanguage, 'language.chinese') }}</option>
           </select>
         </div>
       </div>

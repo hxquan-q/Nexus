@@ -5,23 +5,23 @@
  */
 
 import type { SelectionData } from '../../utils/selectionObserver';
+import { t, type Language } from '../../utils/i18n';
 
 const HOST_ID = 'nexus-selection-toolbar-host';
 const TOOLBAR_Z_INDEX = '2147483646';
 
 export interface ToolbarAction {
   id: string;
-  label: string;
-  labelZh: string;
+  labelKey: string;
   icon: string;
 }
 
 export const DEFAULT_ACTIONS: ToolbarAction[] = [
-  { id: 'ask', label: 'Ask', labelZh: '询问', icon: '✨' },
-  { id: 'summarize', label: 'Summarize', labelZh: '总结', icon: '\u{1F4DD}' },
-  { id: 'translate', label: 'Translate', labelZh: '翻译', icon: '\u{1F310}' },
-  { id: 'explain', label: 'Explain', labelZh: '解释', icon: '\u{1F4A1}' },
-  { id: 'grammar', label: 'Grammar', labelZh: '语法', icon: '✍️' },
+  { id: 'ask', labelKey: 'selection.ask', icon: '✨' },
+  { id: 'summarize', labelKey: 'selection.summarize', icon: '\u{1F4DD}' },
+  { id: 'translate', labelKey: 'selection.translate', icon: '\u{1F310}' },
+  { id: 'explain', labelKey: 'selection.explain', icon: '\u{1F4A1}' },
+  { id: 'grammar', labelKey: 'selection.grammar', icon: '✍️' },
 ];
 
 let toolbarHost: HTMLElement | null = null;
@@ -147,7 +147,7 @@ function ensureHost(): { host: HTMLElement; shadow: ShadowRoot } {
 }
 
 function getLabel(action: ToolbarAction): string {
-  return currentLang === 'zh-CN' ? action.labelZh : action.label;
+  return t(currentLang, action.labelKey);
 }
 
 function renderToolbarActions(): void {

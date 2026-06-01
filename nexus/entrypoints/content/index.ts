@@ -17,6 +17,7 @@ import {
   showResultPopup,
   showErrorPopup,
   destroyPopupHost,
+  setPopupLanguage,
 } from './resultPopup';
 import {
   startOverlay,
@@ -31,13 +32,14 @@ import {
   initFloatingBall,
   destroyFloatingBall,
 } from './floatingBall';
+import { t, type Language } from '../../utils/i18n';
 
 // ============================================================
 // State
 // ============================================================
 
 let selectionObserver: SelectionObserver | null = null;
-let currentLang: 'en' | 'zh-CN' = 'en';
+let currentLang: Language = 'en';
 let pendingPopupOptions: { title: string; anchorRect: DOMRect | null; mousePoint: { x: number; y: number } | null } | null = null;
 
 // ============================================================
@@ -51,15 +53,17 @@ export default defineContentScript({
   main() {
     // Load language setting
     chrome.storage.local.get(['language'], (result: { language?: string }) => {
-      currentLang = (result?.language === 'zh-CN' ? 'zh-CN' : 'en') as 'en' | 'zh-CN';
+      currentLang = (result?.language === 'zh-CN' ? 'zh-CN' : 'en') as Language;
       setToolbarLanguage(currentLang);
+      setPopupLanguage(currentLang);
     });
 
     // Watch for language changes
     chrome.storage.onChanged.addListener((changes: Record<string, { newValue?: any; oldValue?: any }>, area: string) => {
       if (area === 'local' && changes.language) {
-        currentLang = changes.language.newValue === 'zh-CN' ? 'zh-CN' : 'en';
+        currentLang = (changes.language.newValue === 'zh-CN' ? 'zh-CN' : 'en') as Language;
         setToolbarLanguage(currentLang);
+        setPopupLanguage(currentLang);
       }
     });
 
@@ -182,24 +186,14 @@ function handleSelectionAction(actionId: string, selection: SelectionData): void
 }
 
 function getActionTitle(actionId: string): string {
-  if (currentLang === 'zh-CN') {
-    switch (actionId) {
-      case 'ask': return '询问 AI';
-      case 'summarize': return '总结';
-      case 'translate': return '翻译';
-      case 'explain': return '解释';
-      case 'grammar': return '语法检查';
-      default: return 'AI';
-    }
-  }
-  switch (actionId) {
-    case 'ask': return 'Ask AI';
-    case 'summarize': return 'Summarize';
-    case 'translate': return 'Translate';
-    case 'explain': return 'Explain';
-    case 'grammar': return 'Grammar Check';
-    default: return 'AI';
-  }
+  const keyMap: Record<string, string> = {
+    ask: 'selectionAction.ask',
+    summarize: 'selectionAction.summarize',
+    translate: 'selectionAction.translate',
+    explain: 'selectionAction.explain',
+    grammar: 'selectionAction.grammar',
+  };
+  return t(currentLang, keyMap[actionId] || 'selectionAction.ask');
 }
 
 function buildPrompt(actionId: string, text: string): string {

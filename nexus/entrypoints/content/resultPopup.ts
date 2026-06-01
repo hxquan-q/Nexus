@@ -4,8 +4,11 @@
  * Apple-style card with copy and continue-in-sidepanel buttons.
  */
 
+import { t, type Language } from '../../utils/i18n';
+
 const POPUP_HOST_ID = 'nexus-result-popup-host';
 const POPUP_Z_INDEX = '2147483646';
+let currentLang: Language = 'en';
 
 let popupHost: HTMLElement | null = null;
 let popupShadow: ShadowRoot | null = null;
@@ -305,15 +308,15 @@ export function showResultPopup(
 
   const copyBtn = document.createElement('button');
   copyBtn.className = 'nexus-popup-btn nexus-popup-btn-copy';
-  copyBtn.textContent = 'Copy';
+  copyBtn.textContent = t(currentLang, 'popup.copy');
 
   copyBtn.addEventListener('click', async () => {
     try {
       await navigator.clipboard.writeText(content);
-      copyBtn.textContent = 'Copied!';
+      copyBtn.textContent = t(currentLang, 'popup.copied');
       copyBtn.classList.add('copied');
       setTimeout(() => {
-        copyBtn.textContent = 'Copy';
+        copyBtn.textContent = t(currentLang, 'popup.copy');
         copyBtn.classList.remove('copied');
       }, 2000);
     } catch {
@@ -323,7 +326,7 @@ export function showResultPopup(
 
   const continueBtn = document.createElement('button');
   continueBtn.className = 'nexus-popup-btn nexus-popup-btn-continue';
-  continueBtn.textContent = 'Continue in panel';
+  continueBtn.textContent = t(currentLang, 'popup.continueInPanel');
   continueBtn.addEventListener('click', () => {
     destroyPopup();
     if (options.onContinueInSidepanel) {
@@ -361,7 +364,7 @@ export function showErrorPopup(
   errorMessage: string,
 ): void {
   showResultPopup(
-    { ...options, title: 'Error' },
+    { ...options, title: t(currentLang, 'popup.error') },
     errorMessage,
   );
 }
@@ -387,6 +390,13 @@ export function destroyPopupHost(): void {
   }
   popupHost = null;
   popupShadow = null;
+}
+
+/**
+ * Set language for popup text
+ */
+export function setPopupLanguage(lang: Language): void {
+  currentLang = lang;
 }
 
 function escapeHtml(text: string): string {

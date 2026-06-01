@@ -19,7 +19,6 @@ import {
   toAIProvider,
   type StoredProvider,
   type ThemeMode,
-  type Language,
 } from '../../utils/storage';
 import {
   getAllSessions,
@@ -32,6 +31,8 @@ import {
 } from '../../utils/db';
 import { streamChat, getLastApiMessages, setLastApiMessages, ApiError, type StreamChatConfig } from '../../utils/api';
 import { renderMarkdown, decodeData, initChartRendering } from '../../utils/markdown';
+import { t as i18n } from '../../utils/i18n';
+import type { Language } from '../../utils/i18n';
 import { parseFile, detectFormat, type ParsedFile } from '../../utils/fileParser';
 import type { ChatMessage, ChatImage, ChatFileAttachment, ToolCall, ToolResult } from '../../utils/providers/types';
 import { getToolsAsOpenAIFunctions, isBrowserControlTool, isExtractionTool } from '../../utils/tools';
@@ -149,7 +150,7 @@ const activeProvider = computed(() => {
 });
 
 const activeModelName = computed(() => {
-  if (!activeProvider.value) return 'Not configured';
+  if (!activeProvider.value) return i18n(currentLanguage.value, 'model.notConfigured');
   return activeProvider.value.selectedModel;
 });
 
@@ -289,7 +290,7 @@ function flashMarkdownCodeButton(button: HTMLButtonElement): void {
   const label = button.querySelector<HTMLElement>('.markdown-code-btn-label');
   if (!label) return;
 
-  const copiedLabel = button.dataset.copiedLabel || 'Copied!';
+  const copiedLabel = button.dataset.copiedLabel || i18n(currentLanguage.value, 'chat.copied');
   const defaultLabel = button.dataset.defaultLabel || label.textContent || '';
   const previousTimer = button.dataset.resetTimer ? Number(button.dataset.resetTimer) : null;
   if (previousTimer) window.clearTimeout(previousTimer);
@@ -1140,7 +1141,7 @@ async function loadSession(session: ChatSession) {
 
 async function removeSession(id: string, e: Event) {
   e.stopPropagation();
-  if (confirm('Delete this chat?')) {
+  if (confirm(i18n(currentLanguage.value, 'history.deleteConfirm'))) {
     await deleteSession(id);
     sessions.value = await getAllSessions();
     if (currentSession.value?.id === id) {
@@ -1186,14 +1187,14 @@ async function handleImportSession(event: Event) {
     const data = await readImportFile(file);
     const validation = validateImportData(data);
     if (!validation.valid) {
-      alert(`Invalid import file: ${validation.errors.join(', ')}`);
+      alert(`${i18n(currentLanguage.value, 'data.invalidFile')}: ${validation.errors.join(', ')}`);
       return;
     }
     const count = await importSessions(data, 'merge');
-    alert(`Imported ${count} session(s)`);
+    alert(i18n(currentLanguage.value, 'data.importSuccess', { count }));
     await loadInitialSessions();
   } catch (error) {
-    alert(`Import failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    alert(i18n(currentLanguage.value, 'data.importFailed', { error: error instanceof Error ? error.message : 'Unknown error' }));
   } finally {
     input.value = '';
   }
@@ -1573,7 +1574,7 @@ onUnmounted(() => {
     <!-- Header -->
     <header class="header">
       <div class="header-left">
-        <button class="header-btn" @click="openHistory" title="Chat history">
+        <button class="header-btn" @click="openHistory" :title="i18n(currentLanguage, 'header.history')">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="10"/>
             <polyline points="12 6 12 12 16 14"/>
@@ -1591,7 +1592,7 @@ onUnmounted(() => {
       </div>
 
       <div class="header-right">
-        <button class="header-btn" @click="toggleTheme" title="Toggle theme">
+        <button class="header-btn" @click="toggleTheme" :title="i18n(currentLanguage, 'header.toggleTheme')">
           <svg v-if="currentThemeMode === 'light'" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="5"/>
             <line x1="12" y1="1" x2="12" y2="3"/>
@@ -1612,13 +1613,13 @@ onUnmounted(() => {
             <line x1="12" y1="17" x2="12" y2="21"/>
           </svg>
         </button>
-        <button class="header-btn" @click="newChat" title="New chat">
+        <button class="header-btn" @click="newChat" :title="i18n(currentLanguage, 'header.newChat')">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <line x1="12" y1="5" x2="12" y2="19"/>
             <line x1="5" y1="12" x2="19" y2="12"/>
           </svg>
         </button>
-        <button class="header-btn" @click="openSettings" title="Settings">
+        <button class="header-btn" @click="openSettings" :title="i18n(currentLanguage, 'header.settings')">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="3"/>
             <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/>
@@ -1639,7 +1640,7 @@ onUnmounted(() => {
           <span class="model-option-name">{{ option.model }}</span>
         </div>
         <div v-if="allModelOptions.length === 0" class="model-option-empty">
-          No models configured. Open Settings to add a provider.
+          {{ i18n(currentLanguage, 'model.noModels') }}
         </div>
       </div>
     </header>
@@ -1656,7 +1657,7 @@ onUnmounted(() => {
           </svg>
         </div>
         <h2 class="empty-state-title">Nexus</h2>
-        <p class="empty-state-subtitle">What can I help you with?</p>
+        <p class="empty-state-subtitle">{{ i18n(currentLanguage, 'empty.subtitle') }}</p>
       </div>
 
       <!-- Messages -->
@@ -1675,7 +1676,7 @@ onUnmounted(() => {
             >
               <polyline points="9 18 15 12 9 6"/>
             </svg>
-            <span>Thinking...</span>
+            <span>{{ i18n(currentLanguage, 'chat.thinking') }}</span>
           </button>
           <div v-if="reasoningExpanded[index]" class="reasoning-content">
             {{ message.reasoning }}
@@ -1730,7 +1731,7 @@ onUnmounted(() => {
           class="copy-btn"
           :class="{ copied: copiedMessageIndex === index }"
           @click="copyMessage(index)"
-          title="Copy"
+          :title="i18n(currentLanguage, 'chat.copy')"
         >
           <svg v-if="copiedMessageIndex !== index" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
@@ -1750,8 +1751,8 @@ onUnmounted(() => {
     <div v-if="browserAutomationActive || toolExecutionStatus" class="automation-status-bar">
       <div class="automation-status-indicator"></div>
       <span v-if="toolExecutionStatus" class="automation-status-text">{{ toolExecutionStatus }}</span>
-      <span v-else class="automation-status-text">Browser control active: {{ browserAutomationTabTitle }}</span>
-      <button v-if="browserAutomationActive" class="automation-status-stop" @click="endBrowserAutomation">End</button>
+      <span v-else class="automation-status-text">{{ i18n(currentLanguage, 'browser.activeTab', { title: browserAutomationTabTitle }) }}</span>
+      <button v-if="browserAutomationActive" class="automation-status-stop" @click="endBrowserAutomation">{{ i18n(currentLanguage, 'browser.end') }}</button>
     </div>
 
     <!-- Input area -->
@@ -1778,13 +1779,13 @@ onUnmounted(() => {
           :class="{ active: sharePageContentEnabled }"
           @click="toggleSharePageContent"
           :disabled="sharePageContentLoading"
-          title="Share current page content with AI"
+          :title="i18n(currentLanguage, 'sharePage.clickToShare')"
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M4 19.5A2.5 2.5 0 016.5 17H20"/>
             <path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/>
           </svg>
-          <span>{{ sharePageContentEnabled ? 'Shared: ' + sharePageContentTitle : 'Share page' }}</span>
+          <span>{{ sharePageContentEnabled ? i18n(currentLanguage, 'sharePage.shared', { title: sharePageContentTitle }) : i18n(currentLanguage, 'sharePage.share') }}</span>
         </button>
       </div>
 
@@ -1802,7 +1803,7 @@ onUnmounted(() => {
         <button
           class="input-action-btn"
           @click="openFilePicker"
-          title="Attach file"
+          :title="i18n(currentLanguage, 'input.attachFile')"
         >
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/>
@@ -1813,7 +1814,7 @@ onUnmounted(() => {
           ref="textareaRef"
           v-model="inputText"
           class="input-textarea"
-          :placeholder="activeProvider ? 'Type a message or drop files...' : 'Configure a provider in Settings...'"
+          :placeholder="activeProvider ? i18n(currentLanguage, 'input.placeholder') : i18n(currentLanguage, 'input.placeholderNoProvider')"
           rows="1"
           @keydown="handleKeydown"
           @compositionstart="handleCompositionStart"
@@ -1829,7 +1830,7 @@ onUnmounted(() => {
           v-if="isLoading"
           class="send-btn stop-btn"
           @click="terminateCurrentGeneration"
-          title="Stop generating"
+          :title="i18n(currentLanguage, 'chat.stopGenerating')"
         >
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
             <rect x="6" y="6" width="12" height="12" rx="2"/>
@@ -1841,7 +1842,7 @@ onUnmounted(() => {
           :class="{ active: canSendMessage }"
           :disabled="!canSendMessage"
           @click="sendMessage"
-          title="Send"
+          :title="i18n(currentLanguage, 'chat.send')"
         >
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <line x1="22" y1="2" x2="11" y2="13"/>
@@ -1855,7 +1856,7 @@ onUnmounted(() => {
     <div v-if="showHistory" class="history-overlay" @click="showHistory = false">
       <div class="history-panel" @click.stop>
         <div class="history-header">
-          <h3>Chat History</h3>
+          <h3>{{ i18n(currentLanguage, 'history.title') }}</h3>
           <button class="header-btn" @click="showHistory = false">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <line x1="18" y1="6" x2="6" y2="18"/>
@@ -1883,21 +1884,21 @@ onUnmounted(() => {
             </button>
           </button>
           <div v-if="sessions.length === 0" class="history-empty">
-            No chat history yet.
+            {{ i18n(currentLanguage, 'history.noChats') }}
           </div>
-          <div v-if="sessionsLoading" class="history-loading">Loading...</div>
+          <div v-if="sessionsLoading" class="history-loading">{{ i18n(currentLanguage, 'history.loading') }}</div>
         </div>
         <button class="history-new-btn" @click="newChat">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <line x1="12" y1="5" x2="12" y2="19"/>
             <line x1="5" y1="12" x2="19" y2="12"/>
           </svg>
-          New Chat
+          {{ i18n(currentLanguage, 'history.newChat') }}
         </button>
         <div class="history-actions-row">
-          <button class="history-action-btn" @click="handleExportCurrentSession" :disabled="!currentSession">Export</button>
+          <button class="history-action-btn" @click="handleExportCurrentSession" :disabled="!currentSession">{{ i18n(currentLanguage, 'history.export') }}</button>
           <label class="history-action-btn">
-            Import
+            {{ i18n(currentLanguage, 'history.import') }}
             <input type="file" accept=".json" style="display: none" @change="handleImportSession" />
           </label>
         </div>
@@ -1910,22 +1911,22 @@ onUnmounted(() => {
       class="selection-quote-popup"
       :style="{ left: selectionQuotePopup.x + 'px', top: selectionQuotePopup.y + 'px' }"
     >
-      <button @click="useSidepanelSelectionQuote">Quote</button>
+      <button @click="useSidepanelSelectionQuote">{{ i18n(currentLanguage, 'selectionQuote.quote') }}</button>
     </div>
 
     <!-- Fullscreen code modal -->
     <div v-if="fullscreenCodeBlock" class="code-fullscreen-overlay" @click="closeFullscreenCodeBlock">
       <div class="code-fullscreen-container" @click.stop>
         <div class="code-fullscreen-header">
-          <span>{{ fullscreenCodeBlock.language || 'Code' }}</span>
+          <span>{{ fullscreenCodeBlock.language || i18n(currentLanguage, 'chat.code') }}</span>
           <div class="code-fullscreen-actions">
-            <button class="header-btn" @click="copyFullscreenCodeBlock" title="Copy">
+            <button class="header-btn" @click="copyFullscreenCodeBlock" :title="i18n(currentLanguage, 'chat.copy')">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
                 <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
               </svg>
             </button>
-            <button class="header-btn" @click="closeFullscreenCodeBlock" title="Close">
+            <button class="header-btn" @click="closeFullscreenCodeBlock" :title="i18n(currentLanguage, 'code.close')">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <line x1="18" y1="6" x2="6" y2="18"/>
                 <line x1="6" y1="6" x2="18" y2="18"/>
@@ -1945,8 +1946,8 @@ onUnmounted(() => {
         <h4 class="confirmation-title">{{ confirmationDialog.title }}</h4>
         <p class="confirmation-message">{{ confirmationDialog.message }}</p>
         <div class="confirmation-actions">
-          <button class="confirmation-btn cancel" @click="confirmationDialog.onCancel">Cancel</button>
-          <button class="confirmation-btn confirm" @click="confirmationDialog.onConfirm">Confirm</button>
+          <button class="confirmation-btn cancel" @click="confirmationDialog.onCancel">{{ i18n(currentLanguage, 'confirm.cancel') }}</button>
+          <button class="confirmation-btn confirm" @click="confirmationDialog.onConfirm">{{ i18n(currentLanguage, 'confirm.confirm') }}</button>
         </div>
       </div>
     </div>
@@ -1954,19 +1955,19 @@ onUnmounted(() => {
     <!-- Script execution confirmation -->
     <div v-if="scriptConfirmation.visible && scriptConfirmation.request" class="confirmation-overlay" @click="cancelScriptExecution">
       <div class="confirmation-dialog" @click.stop>
-        <h4 class="confirmation-title">Execute Skill Script?</h4>
+        <h4 class="confirmation-title">{{ i18n(currentLanguage, 'script.title') }}</h4>
         <p class="confirmation-message">
-          <strong>{{ scriptConfirmation.request.skillName }}</strong> wants to run script
+          <strong>{{ scriptConfirmation.request.skillName }}</strong> {{ i18n(currentLanguage, 'script.wantsToRun') }}
           <strong>{{ scriptConfirmation.request.scriptName }}</strong>.
         </p>
         <details class="script-details">
-          <summary>View script source</summary>
+          <summary>{{ i18n(currentLanguage, 'script.viewSource') }}</summary>
           <pre class="script-source">{{ scriptConfirmation.request.scriptContent }}</pre>
         </details>
         <div class="confirmation-actions">
-          <button class="confirmation-btn cancel" @click="cancelScriptExecution">Cancel</button>
-          <button class="confirmation-btn confirm" @click="confirmScriptExecution(false)">Run Once</button>
-          <button class="confirmation-btn confirm" @click="confirmScriptExecution(true)">Trust Forever</button>
+          <button class="confirmation-btn cancel" @click="cancelScriptExecution">{{ i18n(currentLanguage, 'confirm.cancel') }}</button>
+          <button class="confirmation-btn confirm" @click="confirmScriptExecution(false)">{{ i18n(currentLanguage, 'script.runOnce') }}</button>
+          <button class="confirmation-btn confirm" @click="confirmScriptExecution(true)">{{ i18n(currentLanguage, 'script.trustForever') }}</button>
         </div>
       </div>
     </div>

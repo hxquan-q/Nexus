@@ -3,8 +3,11 @@
  * Can be clicked to open sidepanel or dragged to reposition
  */
 
+import { t, type Language } from '../../utils/i18n';
+
 const BALL_HOST_ID = 'nexus-floating-ball-host';
 const BALL_Z_INDEX = '2147483645';
+let currentLang: Language = 'en';
 
 let ballHost: HTMLElement | null = null;
 let ballShadow: ShadowRoot | null = null;
@@ -92,9 +95,10 @@ const boundDragEnd = (e: PointerEvent) => onDragEnd(e);
 export function initFloatingBall(): void {
   if (ballHost) return; // Already initialized
 
-  // Check if floating ball is enabled in settings
-  chrome.storage.local.get(['nexusFloatingBallEnabled'], (result: { nexusFloatingBallEnabled?: boolean }) => {
+  // Check if floating ball is enabled in settings and load language
+  chrome.storage.local.get(['nexusFloatingBallEnabled', 'language'], (result: { nexusFloatingBallEnabled?: boolean; language?: string }) => {
     isEnabled = result?.nexusFloatingBallEnabled !== false;
+    currentLang = (result?.language === 'zh-CN' ? 'zh-CN' : 'en') as Language;
     if (!isEnabled) return;
 
     createBall();
@@ -102,13 +106,23 @@ export function initFloatingBall(): void {
 
   // Watch for setting changes
   chrome.storage.onChanged.addListener((changes: Record<string, { newValue?: any; oldValue?: any }>, area: string) => {
-    if (area === 'local' && changes.nexusFloatingBallEnabled !== undefined) {
-      const wasEnabled = isEnabled;
-      isEnabled = changes.nexusFloatingBallEnabled.newValue !== false;
-      if (isEnabled && !wasEnabled) {
-        createBall();
-      } else if (!isEnabled && wasEnabled) {
-        destroyBall();
+    if (area === 'local') {
+      if (changes.nexusFloatingBallEnabled !== undefined) {
+        const wasEnabled = isEnabled;
+        isEnabled = changes.nexusFloatingBallEnabled.newValue !== false;
+        if (isEnabled && !wasEnabled) {
+          createBall();
+        } else if (!isEnabled && wasEnabled) {
+          destroyBall();
+        }
+      }
+      if (changes.language) {
+        currentLang = (changes.language.newValue === 'zh-CN' ? 'zh-CN' : 'en') as Language;
+        // Update aria-label if ball exists
+        const ball = ballShadow?.querySelector('.nexus-ball') as HTMLElement | null;
+        if (ball) {
+          ball.setAttribute('aria-label', t(currentLang, 'floatingBall.openNexus'));
+        }
       }
     }
   });
@@ -131,7 +145,7 @@ function createBall(): void {
   ball.style.bottom = `${currentY}px`;
   ball.innerHTML = `<span class="nexus-ball-icon">${getBallIcon()}</span>`;
   ball.title = 'Nexus';
-  ball.setAttribute('aria-label', 'Open Nexus');
+  ball.setAttribute('aria-label', t(currentLang, 'floatingBall.openNexus'));
 
   ball.addEventListener('pointerdown', boundDragStart);
 
