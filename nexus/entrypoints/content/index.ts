@@ -46,7 +46,6 @@ import { t, type Language } from '../../utils/i18n';
 if ((window as any).__nexusContentScriptLoaded) {
   // Already injected (e.g., extension was reloaded). The main() guard
   // below will prevent re-initialization. This flag is informational.
-  console.log('[Nexus] Content script already loaded on this page');
 }
 (window as any).__nexusContentScriptLoaded = true;
 
@@ -99,8 +98,6 @@ function cleanup(): void {
   destroyShortcuts();
   destroyFloatingBall();
   pendingPopupOptions = null;
-
-  console.log('[Nexus] Content script cleaned up');
 }
 
 // ============================================================
@@ -115,14 +112,12 @@ export default defineContentScript({
     // Double-injection guard: if the content script was already loaded
     // (e.g. extension was reloaded), skip initialization
     if ((window as any).__nexusContentScriptMainInitialized) {
-      console.log('[Nexus] Content script main() already ran, skipping');
       return;
     }
     (window as any).__nexusContentScriptMainInitialized = true;
 
     // Bail out on restricted pages
     if (isRestrictedPage()) {
-      console.log('[Nexus] Content script disabled on restricted page');
       return;
     }
 
@@ -188,8 +183,6 @@ export default defineContentScript({
             return false;
         }
       });
-
-      console.log('[Nexus] Content script initialized');
     } catch (error) {
       console.error('[Nexus] Content script initialization failed:', error);
       // Don't crash the host page - just log and continue

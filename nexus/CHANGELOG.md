@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.1] - 2026-06-02
+
+### Changed
+- Replaced all `alert()` calls in options page with toast notifications
+- Replaced all `confirm()` calls with custom confirmation dialog modals
+- Internationalized all previously hardcoded English toast messages
+- Removed non-essential `console.log` statements from content script and background service worker
+- Added `.editorconfig` for consistent code style across contributors
+- Added `LICENSE` file (MIT)
+- Updated README with Contributing section and CHANGELOG link
+
 ## [0.2.0] - 2026-06-02
 
 ### Added

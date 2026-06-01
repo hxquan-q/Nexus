@@ -1475,7 +1475,11 @@ async function loadSession(session: ChatSession) {
 }
 
 async function removeSession(id: string) {
-  if (confirm(i18n(currentLanguage.value, 'history.deleteConfirm'))) {
+  const confirmed = await showConfirmation(
+    i18n(currentLanguage.value, 'options.delete'),
+    i18n(currentLanguage.value, 'history.deleteConfirm'),
+  );
+  if (confirmed) {
     await deleteSession(id);
     await loadInitialSessions();
     if (currentSession.value?.id === id) {

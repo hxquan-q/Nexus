@@ -134,6 +134,34 @@ function showSaveToast(message: string): void {
   }, 2000);
 }
 
+// Confirmation dialog
+interface ConfirmDialogState {
+  visible: boolean;
+  title: string;
+  message: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+}
+const confirmDialog = ref<ConfirmDialogState | null>(null);
+
+function showConfirmDialog(title: string, message: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    confirmDialog.value = {
+      visible: true,
+      title,
+      message,
+      onConfirm: () => {
+        confirmDialog.value = null;
+        resolve(true);
+      },
+      onCancel: () => {
+        confirmDialog.value = null;
+        resolve(false);
+      },
+    };
+  });
+}
+
 function validateProviderForm(p: StoredProvider): string | null {
   if (!p.name.trim()) return 'Provider name is required';
   if (!p.baseUrl.trim()) return 'Base URL is required';
@@ -239,7 +267,7 @@ async function saveProviderForm() {
   providers.value = await getAllProviders();
   showAddProvider.value = false;
   editingProvider.value = null;
-  showSaveToast('Provider saved successfully');
+  showSaveToast(i18n(currentLanguage.value, 'options.providerSaved'));
 }
 
 async function moveProviderUp(index: number) {
@@ -263,7 +291,7 @@ async function moveProviderDown(index: number) {
 }
 
 async function removeProvider(id: string) {
-  if (!confirm(i18n(currentLanguage.value, 'providers.deleteConfirm'))) return;
+  if (!(await showConfirmDialog(i18n(currentLanguage.value, 'options.delete'), i18n(currentLanguage.value, 'providers.deleteConfirm')))) return;
   await deleteProviderFromStorage(id);
   providers.value = await getAllProviders();
   if (activeProviderId.value === id) {
@@ -429,7 +457,7 @@ async function changeMaxToolCalls() {
 async function saveSystemPromptText() {
   await setSystemPrompt(systemPromptText.value);
   systemPromptSaved.value = systemPromptText.value;
-  showSaveToast('System prompt saved');
+  showSaveToast(i18n(currentLanguage.value, 'options.systemPromptSaved'));
 }
 
 function resetSystemPromptText() {
@@ -496,13 +524,13 @@ function cancelMcpForm() {
 async function saveMcpServerForm() {
   const s = formMcpServer.value;
   if (!s.name || !s.url) {
-    showSaveToast('Server name and URL are required');
+    showSaveToast(i18n(currentLanguage.value, 'options.mcpServerNameRequired'));
     return;
   }
   try {
     new URL(s.url);
   } catch {
-    showSaveToast('Server URL must be a valid URL');
+    showSaveToast(i18n(currentLanguage.value, 'options.mcpServerUrlInvalid'));
     return;
   }
   await saveMcpServer(s);
@@ -510,11 +538,11 @@ async function saveMcpServerForm() {
   showMcpForm.value = false;
   editingMcpServer.value = null;
   mcpTestResult.value = null;
-  showSaveToast('MCP server saved successfully');
+  showSaveToast(i18n(currentLanguage.value, 'options.mcpServerSaved'));
 }
 
 async function removeMcpServer(id: string) {
-  if (!confirm(i18n(currentLanguage.value, 'mcp.deleteConfirm'))) return;
+  if (!(await showConfirmDialog(i18n(currentLanguage.value, 'options.delete'), i18n(currentLanguage.value, 'mcp.deleteConfirm')))) return;
   try {
     await mcpManager.disconnect(id);
   } catch {
@@ -574,7 +602,7 @@ async function handleSkillImport(event: Event) {
     await importSkill(input.files);
     await refreshSkills();
   } catch (error) {
-    alert(`Failed to import skill: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    showSaveToast(i18n(currentLanguage.value, 'options.skillImportFailed', { error: error instanceof Error ? error.message : 'Unknown error' }));
   } finally {
     skillImporting.value = false;
     input.value = '';
@@ -582,7 +610,7 @@ async function handleSkillImport(event: Event) {
 }
 
 async function removeSkill(id: string) {
-  if (!confirm(i18n(currentLanguage.value, 'skills.deleteConfirm'))) return;
+  if (!(await showConfirmDialog(i18n(currentLanguage.value, 'options.delete'), i18n(currentLanguage.value, 'skills.deleteConfirm')))) return;
   await deleteSkillFromDb(id);
   await refreshSkills();
 }
@@ -599,7 +627,7 @@ const shortcuts = ref<ShortcutBinding[]>([]);
 const rebindingAction = ref<string | null>(null);
 
 async function resetShortcuts() {
-  if (!confirm(i18n(currentLanguage.value, 'shortcuts.resetConfirm'))) return;
+  if (!(await showConfirmDialog(i18n(currentLanguage.value, 'options.reset'), i18n(currentLanguage.value, 'shortcuts.resetConfirm')))) return;
   shortcuts.value = getDefaultShortcuts();
   await saveShortcuts(shortcuts.value);
 }
@@ -720,7 +748,7 @@ async function exportAllAsJson() {
     const data = await exportAllSessions();
     downloadAsJson(data);
   } catch (error) {
-    alert(i18n(currentLanguage.value, 'data.exportFailed', { error: error instanceof Error ? error.message : 'Unknown error' }));
+    showSaveToast(i18n(currentLanguage.value, 'data.exportFailed', { error: error instanceof Error ? error.message : 'Unknown error' }));
   } finally {
     dataExporting.value = false;
   }
@@ -732,12 +760,12 @@ async function exportAllAsZip() {
     const { getAllSessions } = await import('../../utils/db');
     const sessions = await getAllSessions();
     if (sessions.length === 0) {
-      alert(i18n(currentLanguage.value, 'data.noSessionsExport'));
+      showSaveToast(i18n(currentLanguage.value, 'data.noSessionsExport'));
       return;
     }
     await downloadMultipleAsZip(sessions);
   } catch (error) {
-    alert(i18n(currentLanguage.value, 'data.exportFailed', { error: error instanceof Error ? error.message : 'Unknown error' }));
+    showSaveToast(i18n(currentLanguage.value, 'data.exportFailed', { error: error instanceof Error ? error.message : 'Unknown error' }));
   } finally {
     dataExporting.value = false;
   }
@@ -753,13 +781,13 @@ async function handleImportFile(event: Event) {
     const data = await readImportFile(file);
     const validation = validateImportData(data);
     if (!validation.valid) {
-      alert(`${i18n(currentLanguage.value, 'data.invalidFile')}:\n${validation.errors.join('\n')}`);
+      showSaveToast(`${i18n(currentLanguage.value, 'data.invalidFile')}: ${validation.errors.join(', ')}`);
       return;
     }
     importFileData.value = data;
     importPreviewData.value = previewImport(data);
   } catch (error) {
-    alert(i18n(currentLanguage.value, 'data.failedRead', { error: error instanceof Error ? error.message : 'Unknown error' }));
+    showSaveToast(i18n(currentLanguage.value, 'data.failedRead', { error: error instanceof Error ? error.message : 'Unknown error' }));
   } finally {
     dataImporting.value = false;
     input.value = '';
@@ -774,16 +802,16 @@ async function confirmImport(mode: 'merge' | 'replace') {
       ? i18n(currentLanguage.value, 'data.replaceConfirm')
       : i18n(currentLanguage.value, 'data.mergeConfirm');
 
-  if (!confirm(confirmMsg)) return;
+  if (!(await showConfirmDialog(i18n(currentLanguage.value, 'options.import'), confirmMsg))) return;
 
   dataImporting.value = true;
   try {
     const count = await importSessions(importFileData.value, mode);
-    alert(i18n(currentLanguage.value, 'data.importSuccess', { count }));
+    showSaveToast(i18n(currentLanguage.value, 'data.importSuccessToast', { count }));
     importFileData.value = null;
     importPreviewData.value = null;
   } catch (error) {
-    alert(i18n(currentLanguage.value, 'data.importFailed', { error: error instanceof Error ? error.message : 'Unknown error' }));
+    showSaveToast(i18n(currentLanguage.value, 'data.importFailed', { error: error instanceof Error ? error.message : 'Unknown error' }));
   } finally {
     dataImporting.value = false;
   }
@@ -795,14 +823,14 @@ function cancelImport() {
 }
 
 async function clearAllData() {
-  if (!confirm(i18n(currentLanguage.value, 'data.clearConfirm1'))) return;
-  if (!confirm(i18n(currentLanguage.value, 'data.clearConfirm2'))) return;
+  if (!(await showConfirmDialog(i18n(currentLanguage.value, 'options.clearData'), i18n(currentLanguage.value, 'data.clearConfirm1')))) return;
+  if (!(await showConfirmDialog(i18n(currentLanguage.value, 'options.clearData'), i18n(currentLanguage.value, 'data.clearConfirm2')))) return;
 
   const sessions = await getAllSessions();
   for (const s of sessions) {
     await deleteSession(s.id);
   }
-  alert(i18n(currentLanguage.value, 'data.cleared'));
+  showSaveToast(i18n(currentLanguage.value, 'data.clearedToast'));
 }
 
 // ============================================================
@@ -851,7 +879,7 @@ onMounted(async () => {
     presets.value = await getPresetActions();
   } catch (error) {
     console.error('[Nexus] Options page initialization failed:', error);
-    showSaveToast('Failed to load settings. Please reload the page.');
+    showSaveToast(i18n(currentLanguage.value, 'options.loadFailed'));
   }
 });
 </script>
@@ -1517,8 +1545,20 @@ onMounted(async () => {
 
     <!-- Footer -->
     <footer class="options-footer">
-      Nexus v0.2.0
+      Nexus v0.2.1
     </footer>
+
+    <!-- Confirmation dialog -->
+    <div v-if="confirmDialog" class="modal-overlay" @click="confirmDialog.onCancel()">
+      <div class="confirm-dialog" @click.stop>
+        <h2>{{ confirmDialog.title }}</h2>
+        <p class="confirm-message">{{ confirmDialog.message }}</p>
+        <div class="confirm-actions">
+          <button class="btn-secondary" @click="confirmDialog.onCancel()">{{ i18n(currentLanguage, 'options.cancel') }}</button>
+          <button class="btn-danger" @click="confirmDialog.onConfirm()">{{ i18n(currentLanguage, 'options.delete') }}</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -2357,6 +2397,51 @@ onMounted(async () => {
 @keyframes options-toast-out {
   from { opacity: 1; }
   to { opacity: 0; }
+}
+
+/* Confirmation dialog */
+.confirm-dialog {
+  width: 380px;
+  max-width: 90vw;
+  background: var(--color-bg-primary);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: var(--spacing-lg);
+}
+
+.confirm-dialog h2 {
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  margin-bottom: var(--spacing-sm);
+}
+
+.confirm-message {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+  margin-bottom: var(--spacing-lg);
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spacing-sm);
+}
+
+.confirm-actions .btn-danger {
+  background: var(--color-error);
+  color: #fff;
+  border: none;
+  padding: var(--spacing-xs) var(--spacing-md);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  transition: opacity 200ms ease;
+}
+
+.confirm-actions .btn-danger:hover {
+  opacity: 0.85;
 }
 
 /* Manual model input row */

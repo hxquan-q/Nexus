@@ -149,7 +149,6 @@ export default defineBackground(() => {
     if (state?.isStreaming && Date.now() - state.timestamp < 5 * 60 * 1000) {
       // There was an interrupted streaming operation within the last 5 minutes
       // Notify sidepanel if it opens
-      console.log('[Nexus] Detected interrupted operation, will notify sidepanel');
     }
     setInProgressState(null);
   });
@@ -566,8 +565,6 @@ export default defineBackground(() => {
         return false;
     }
   });
-
-  console.log('[Nexus] Background service worker initialized');
 });
 
 /**

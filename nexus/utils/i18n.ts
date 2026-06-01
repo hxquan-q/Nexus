@@ -158,6 +158,9 @@ const translations: Record<Language, Record<TranslationKey, string>> = {
     'options.active': 'Active',
     'options.activate': 'Activate',
     'options.loading': 'Loading...',
+    'options.reset': 'Reset',
+    'options.import': 'Import',
+    'options.clearData': 'Clear Data',
 
     // ===== Options: Providers =====
     'providers.title': 'AI Providers',
@@ -282,6 +285,17 @@ const translations: Record<Language, Record<TranslationKey, string>> = {
     'data.failedRead': 'Failed to read import file',
     'data.replaceConfirm': 'This will DELETE all existing chats and replace with imported data. Are you sure?',
     'data.mergeConfirm': 'This will add imported chats alongside your existing ones. Continue?',
+    'data.importSuccessToast': 'Successfully imported {count} session(s)',
+    'data.clearedToast': 'All chat data has been cleared',
+
+    // ===== Options: Toasts =====
+    'options.providerSaved': 'Provider saved successfully',
+    'options.systemPromptSaved': 'System prompt saved',
+    'options.mcpServerNameRequired': 'Server name and URL are required',
+    'options.mcpServerUrlInvalid': 'Server URL must be a valid URL',
+    'options.mcpServerSaved': 'MCP server saved successfully',
+    'options.loadFailed': 'Failed to load settings. Please reload the page.',
+    'options.skillImportFailed': 'Failed to import skill: {error}',
 
     // ===== Options: Language =====
     'language.title': 'Language',
@@ -572,6 +586,9 @@ const translations: Record<Language, Record<TranslationKey, string>> = {
     'options.active': '活跃',
     'options.activate': '启用',
     'options.loading': '加载中...',
+    'options.reset': '重置',
+    'options.import': '导入',
+    'options.clearData': '清除数据',
 
     // ===== Options: Providers =====
     'providers.title': 'AI 供应商',
@@ -696,6 +713,17 @@ const translations: Record<Language, Record<TranslationKey, string>> = {
     'data.failedRead': '读取导入文件失败',
     'data.replaceConfirm': '将删除所有现有对话并替换为导入数据，确认继续？',
     'data.mergeConfirm': '将把导入的对话添加到现有对话中，确认继续？',
+    'data.importSuccessToast': '成功导入 {count} 个对话',
+    'data.clearedToast': '所有聊天数据已清除',
+
+    // ===== Options: Toasts =====
+    'options.providerSaved': '供应商已保存',
+    'options.systemPromptSaved': '系统提示已保存',
+    'options.mcpServerNameRequired': '请填写服务器名称和 URL',
+    'options.mcpServerUrlInvalid': '服务器 URL 格式无效',
+    'options.mcpServerSaved': 'MCP 服务器已保存',
+    'options.loadFailed': '加载设置失败，请刷新页面',
+    'options.skillImportFailed': '导入技能失败: {error}',
 
     // ===== Options: Language =====
     'language.title': '语言',
