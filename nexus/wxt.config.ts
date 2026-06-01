@@ -40,7 +40,7 @@ export default defineConfig({
     },
     web_accessible_resources: [
       {
-        resources: ['sandbox.html'],
+        resources: ['sandbox/index.html', 'sandbox.html'],
         matches: ['<all_urls>'],
       },
     ],

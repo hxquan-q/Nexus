@@ -292,6 +292,7 @@ export function initChartRendering(container: HTMLElement): void {
   if (chartContainers.length === 0) return;
 
   // Resolve sandbox page URL relative to the extension
+  // WXT builds sandbox/index.html into sandbox.html in the output
   const sandboxUrl = browser.runtime.getURL('/sandbox.html' as any);
 
   for (const chartEl of chartContainers) {

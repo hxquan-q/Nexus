@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Nexus Chart Sandbox</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: transparent;
+    }
+    #container {
+      width: 100%;
+      height: 100%;
+    }
+    .error {
+      color: #ff3b30;
+      padding: 12px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      font-size: 13px;
+    }
+  </style>
+</head>
+<body>
+  <div id="container"></div>
+  <script type="module">
+    // Signal readiness to parent
+    parent.postMessage({ type: 'sandbox-ready' }, '*');
+
+    window.addEventListener('message', async (event) => {
+      const data = event.data;
+      if (!data || !data.type || !data.id) return;
+
+      const container = document.getElementById('container');
+      if (!container) return;
+
+      try {
+        if (data.type === 'render-mermaid') {
+          const mermaid = (await import('mermaid')).default;
+          mermaid.initialize({
+            startOnLoad: false,
+            theme: 'default',
+            securityLevel: 'loose',
+          });
+
+          const { svg } = await mermaid.render(`mermaid-${data.id}`, data.code);
+          container.innerHTML = svg;
+          parent.postMessage({ type: 'mermaid-result', id: data.id, svg }, '*');
+        }
+
+        if (data.type === 'render-graphviz') {
+          const { instance } = await import('@viz-js/viz');
+          const viz = await instance();
+          const svgElement = viz.renderSVGElement(data.code, { engine: 'dot' });
+          container.innerHTML = '';
+          container.appendChild(svgElement);
+          parent.postMessage({ type: 'graphviz-result', id: data.id, svg: svgElement.outerHTML }, '*');
+        }
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        container.innerHTML = `<div class="error">Render error: ${errorMessage}</div>`;
+        parent.postMessage({ type: 'chart-error', id: data.id, error: errorMessage }, '*');
+      }
+    });
+  </script>
+</body>
+</html>

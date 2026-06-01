@@ -260,8 +260,10 @@ export async function* streamChat(
 
   // Only support OpenAI-compatible providers in Phase 1
   if (!isOpenAICompatible(provider.type)) {
-    // For Anthropic/Gemini, fall back to OpenAI-compatible endpoint if configured
-    // Full native support will come in later phases
+    // For Anthropic/Gemini, if the user configured a compatible proxy endpoint,
+    // the isOpenAICompatible check may be wrong. Allow it to try anyway since
+    // many providers expose OpenAI-compatible endpoints.
+    // If it fails, the error will be caught and surfaced to the user.
   }
 
   const adapterConfig = getAdapterConfig(provider);
@@ -306,9 +308,25 @@ export async function* streamChat(
           createParams.tools = tools;
         }
 
-        stream = await client.chat.completions.create(createParams as OpenAI.ChatCompletionCreateParamsStreaming, {
-          signal: controller.signal,
-        });
+        try {
+          stream = await client.chat.completions.create(createParams as OpenAI.ChatCompletionCreateParamsStreaming, {
+            signal: controller.signal,
+          });
+        } catch (toolError: any) {
+          // If the provider doesn't support tool calling, retry without tools
+          if (tools && tools.length > 0 && toolError?.status === 400) {
+            const createParamsNoTools: any = {
+              model: provider.selectedModel,
+              messages: convertToOpenAIMessages(apiMessages),
+              stream: true,
+            };
+            stream = await client.chat.completions.create(createParamsNoTools as OpenAI.ChatCompletionCreateParamsStreaming, {
+              signal: controller.signal,
+            });
+          } else {
+            throw toolError;
+          }
+        }
         clear();
         break;
       } catch (error) {
@@ -393,10 +411,11 @@ export async function* streamChat(
       throw parseError(streamError);
     }
 
-    // Collect tool calls in order
+    // Collect tool calls in order, filtering out any without valid IDs
     const toolCalls = Array.from(toolCallsMap.entries())
       .sort(([a], [b]) => a - b)
-      .map(([, tc]) => tc);
+      .map(([, tc]) => tc)
+      .filter((tc) => tc.id && tc.name);
 
     // Update API messages with assistant response
     const assistantMessage: ApiMessage = {

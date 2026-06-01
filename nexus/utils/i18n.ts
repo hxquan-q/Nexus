@@ -27,6 +27,8 @@ const translations: Record<Language, Record<TranslationKey, string>> = {
     // ===== Empty State =====
     'empty.title': 'Nexus',
     'empty.subtitle': 'What can I help you with?',
+    'empty.noProvider': 'Welcome! Let\'s get started.',
+    'empty.configure': 'Configure AI Provider',
 
     // ===== Chat Messages =====
     'chat.thinking': 'Thinking...',
@@ -317,6 +319,8 @@ const translations: Record<Language, Record<TranslationKey, string>> = {
     // ===== Empty State =====
     'empty.title': 'Nexus',
     'empty.subtitle': '有什么可以帮你的？',
+    'empty.noProvider': '欢迎！让我们开始吧。',
+    'empty.configure': '配置 AI 供应商',
 
     // ===== Chat Messages =====
     'chat.thinking': '思考中...',

@@ -5,13 +5,13 @@
 
 import { storage } from '@wxt-dev/storage';
 import type { AIProvider, ProviderType } from './providers/types';
+import type { Language } from './i18n';
 
 // ============================================================
 // Types
 // ============================================================
 
 export type ThemeMode = 'light' | 'dark' | 'system';
-export type Language = 'en' | 'zh-CN';
 
 // ============================================================
 // Provider storage
@@ -330,4 +330,11 @@ export function toAIProvider(stored: StoredProvider): AIProvider {
     selectedModel: stored.selectedModel,
     visionModels: stored.visionModels || [],
   };
+}
+
+/**
+ * Check if a given model supports vision/image input for a provider.
+ */
+export function isVisionSupportedForModel(provider: StoredProvider, model: string): boolean {
+  return provider.visionModels?.includes(model) ?? false;
 }

@@ -29,17 +29,17 @@ import {
   generateSessionTitle,
   type ChatSession,
 } from '../../utils/db';
-import { streamChat, getLastApiMessages, setLastApiMessages, ApiError, type StreamChatConfig } from '../../utils/api';
+import { streamChat, getLastApiMessages, setLastApiMessages, ApiError } from '../../utils/api';
 import { renderMarkdown, decodeData, initChartRendering } from '../../utils/markdown';
 import { t as i18n } from '../../utils/i18n';
 import type { Language } from '../../utils/i18n';
-import { parseFile, detectFormat, type ParsedFile } from '../../utils/fileParser';
+import { parseFile, detectFormat } from '../../utils/fileParser';
 import type { ChatMessage, ChatImage, ChatFileAttachment, ToolCall, ToolResult } from '../../utils/providers/types';
-import { getToolsAsOpenAIFunctions, isBrowserControlTool, isExtractionTool } from '../../utils/tools';
+import { getToolsAsOpenAIFunctions, isBrowserControlTool } from '../../utils/tools';
 import { mcpManager, mcpToolToOpenAITool, parseMcpToolName, isMcpTool, type McpTool } from '../../utils/mcp';
 import { getEnabledMcpServers, watchMcpServers } from '../../utils/mcpStorage';
-import { getAllSkills, getSkillByName, getSkillsAsTools, getSkillFileAsText, type Skill } from '../../utils/skills';
-import { executeScript, setScriptConfirmCallback, validateScript, type ScriptConfirmationRequest } from '../../utils/skillsExecutor';
+import { getAllSkills, getSkillsAsTools, getSkillFileAsText, type Skill } from '../../utils/skills';
+import { executeScript, setScriptConfirmCallback, type ScriptConfirmationRequest } from '../../utils/skillsExecutor';
 
 // ============================================================
 // State
@@ -116,6 +116,20 @@ const selectionQuotePopup = ref({ visible: false, x: 0, y: 0, text: '' });
 // Debounced save timer
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 const SAVE_DEBOUNCE_MS = 300;
+
+// Throttled streaming render - avoid excessive DOM updates
+let streamRenderTimer: ReturnType<typeof requestAnimationFrame> | null = null;
+let streamContentDirty = false;
+const streamRenderThrottle = () => {
+  if (streamRenderTimer) return;
+  streamRenderTimer = requestAnimationFrame(() => {
+    streamRenderTimer = null;
+    if (streamContentDirty) {
+      streamContentDirty = false;
+      triggerRef(messages);
+    }
+  });
+};
 
 // Toast notification system
 const toastMessage = ref<string | null>(null);
@@ -311,9 +325,19 @@ function toggleReasoning(idx: number) {
   reasoningExpanded.value[idx] = !reasoningExpanded.value[idx];
 }
 
+// Auto-scroll management: stop scrolling if user scrolls up
+let isUserScrolledUp = false;
+
+const checkUserScroll = () => {
+  const el = chatAreaRef.value;
+  if (!el) return;
+  // If user is more than 100px from bottom, consider them scrolled up
+  isUserScrolledUp = el.scrollHeight - el.scrollTop - el.clientHeight > 100;
+};
+
 const scrollToBottom = () => {
   nextTick(() => {
-    if (chatAreaRef.value) {
+    if (chatAreaRef.value && !isUserScrolledUp) {
       chatAreaRef.value.scrollTop = chatAreaRef.value.scrollHeight;
     }
   });
@@ -433,8 +457,10 @@ function openImagePicker(): void {
   imageInputRef.value?.click();
 }
 
+const fileInputRef = ref<HTMLInputElement | null>(null);
+
 function openFilePicker(): void {
-  imageInputRef.value?.click();
+  fileInputRef.value?.click();
 }
 
 function isSupportedImageFile(file: File): boolean {
@@ -960,6 +986,7 @@ async function sendMessage() {
   if ((!text && !hasImages && !hasFiles) || isLoading.value) return;
 
   isLoading.value = true;
+  isUserScrolledUp = false;
   chatAbortController.value?.abort();
   chatAbortController.value = new AbortController();
 
@@ -1053,11 +1080,13 @@ async function sendMessage() {
         case 'reasoning':
           if (!assistantMessage.reasoning) assistantMessage.reasoning = '';
           assistantMessage.reasoning += event.content;
-          triggerRef(messages);
+          streamContentDirty = true;
+          streamRenderThrottle();
           break;
         case 'content':
           assistantMessage.content += event.content;
-          triggerRef(messages);
+          streamContentDirty = true;
+          streamRenderThrottle();
           scrollToBottom();
           break;
         case 'thinking':
@@ -1086,6 +1115,7 @@ async function sendMessage() {
           if (assistantMessage.reasoning) {
             assistantMessage.reasoning = assistantMessage.reasoning.trim();
           }
+          triggerRef(messages);
           break;
       }
     }
@@ -1113,6 +1143,11 @@ async function sendMessage() {
     chatAbortController.value = null;
     isLoading.value = false;
     toolExecutionStatus.value = null;
+    streamContentDirty = false;
+    if (streamRenderTimer) {
+      cancelAnimationFrame(streamRenderTimer);
+      streamRenderTimer = null;
+    }
     // Clear any pending debounced save and do a final save
     if (saveTimer) {
       clearTimeout(saveTimer);
@@ -1445,6 +1480,7 @@ function handleContentMessage(message: any): void {
 
 async function handleContentImageMessage(imageUrl: string, prompt: string): Promise<void> {
   isLoading.value = true;
+  isUserScrolledUp = false;
   chatAbortController.value?.abort();
   chatAbortController.value = new AbortController();
 
@@ -1506,11 +1542,13 @@ async function handleContentImageMessage(imageUrl: string, prompt: string): Prom
         case 'reasoning':
           if (!assistantMessage.reasoning) assistantMessage.reasoning = '';
           assistantMessage.reasoning += event.content;
-          triggerRef(messages);
+          streamContentDirty = true;
+          streamRenderThrottle();
           break;
         case 'content':
           assistantMessage.content += event.content;
-          triggerRef(messages);
+          streamContentDirty = true;
+          streamRenderThrottle();
           scrollToBottom();
           break;
         case 'tool_call':
@@ -1526,6 +1564,7 @@ async function handleContentImageMessage(imageUrl: string, prompt: string): Prom
           if (assistantMessage.reasoning) {
             assistantMessage.reasoning = assistantMessage.reasoning.trim();
           }
+          triggerRef(messages);
           break;
       }
     }
@@ -1553,6 +1592,11 @@ async function handleContentImageMessage(imageUrl: string, prompt: string): Prom
     chatAbortController.value = null;
     isLoading.value = false;
     toolExecutionStatus.value = null;
+    streamContentDirty = false;
+    if (streamRenderTimer) {
+      cancelAnimationFrame(streamRenderTimer);
+      streamRenderTimer = null;
+    }
     // Clear any pending debounced save and do a final save
     if (saveTimer) {
       clearTimeout(saveTimer);
@@ -1621,6 +1665,9 @@ onMounted(async () => {
   document.addEventListener('keydown', globalKeydownHandler);
   document.addEventListener('mouseup', handleSidepanelSelectionMouseup);
   document.addEventListener('mousedown', handleSidepanelSelectionMousedown);
+  if (chatAreaRef.value) {
+    chatAreaRef.value.addEventListener('scroll', checkUserScroll, { passive: true });
+  }
 
   // Listen for messages from content script (forwarded via background)
   contentMessageHandler = (message: any) => {
@@ -1647,6 +1694,8 @@ onUnmounted(() => {
   chatAbortController.value?.abort();
   if (saveTimer) clearTimeout(saveTimer);
   if (toastTimer) clearTimeout(toastTimer);
+  if (streamRenderTimer) cancelAnimationFrame(streamRenderTimer);
+  streamContentDirty = false;
   unwatchProviders.value?.();
   unwatchActiveProviderId.value?.();
   unwatchLanguage.value?.();
@@ -1659,6 +1708,10 @@ onUnmounted(() => {
   if (globalKeydownHandler) document.removeEventListener('keydown', globalKeydownHandler);
   document.removeEventListener('mouseup', handleSidepanelSelectionMouseup);
   document.removeEventListener('mousedown', handleSidepanelSelectionMousedown);
+  if (chatAreaRef.value) {
+    chatAreaRef.value.removeEventListener('scroll', checkUserScroll);
+  }
+  isUserScrolledUp = false;
   if (contentMessageHandler) {
     browser.runtime.onMessage.removeListener(contentMessageHandler);
     contentMessageHandler = null;
@@ -1779,7 +1832,15 @@ onUnmounted(() => {
             </svg>
           </div>
           <h2 class="empty-state-title">Nexus</h2>
-          <p class="empty-state-subtitle">{{ i18n(currentLanguage, 'empty.subtitle') }}</p>
+          <p v-if="!activeProvider" class="empty-state-subtitle">{{ i18n(currentLanguage, 'empty.noProvider') }}</p>
+          <p v-else class="empty-state-subtitle">{{ i18n(currentLanguage, 'empty.subtitle') }}</p>
+          <button v-if="!activeProvider" class="empty-state-cta" @click="openSettings">
+            {{ i18n(currentLanguage, 'empty.configure') }}
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="9 18 15 12 9 6"/>
+            </svg>
+          </button>
+          <p v-if="!activeProvider" class="empty-state-hint">OpenAI, Claude, Gemini, DeepSeek & more</p>
         </div>
       </div>
 
@@ -1917,7 +1978,7 @@ onUnmounted(() => {
       <div class="input-row">
         <input
           type="file"
-          ref="imageInputRef"
+          ref="fileInputRef"
           accept="image/*,.pdf,.docx,.csv,.txt,.md"
           multiple
           style="display: none"
@@ -2378,6 +2439,36 @@ onUnmounted(() => {
 .empty-state-subtitle {
   font-size: var(--font-size-md);
   color: var(--color-text-secondary);
+}
+
+.empty-state-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  margin-top: var(--spacing-md);
+  padding: var(--spacing-sm) var(--spacing-lg);
+  border: none;
+  background: var(--color-accent);
+  color: var(--color-text-on-accent);
+  font-size: var(--font-size-md);
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: var(--radius-full);
+  transition: all var(--transition-normal);
+  font-family: var(--font-body);
+}
+
+.empty-state-cta:hover {
+  background: var(--color-accent-hover);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+
+.empty-state-hint {
+  margin-top: var(--spacing-sm);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  opacity: 0.7;
 }
 
 /* Messages */
