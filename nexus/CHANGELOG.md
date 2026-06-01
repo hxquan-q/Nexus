@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.0] - 2026-06-02
+
+### Added
+- Manifest `_default_locale` i18n support with en/zh_CN message catalogs
+- Contributing guide (`CONTRIBUTING.md`)
+
+### Fixed
+- Added missing `contextMenus` permission to manifest (context menu registration was failing silently)
+
+### Changed
+- Manifest name and description now use `__MSG_` references for Chrome Web Store localization
+- Version bumped to 0.3.0
+
 ## [0.2.2] - 2026-06-02
 
 ### Changed

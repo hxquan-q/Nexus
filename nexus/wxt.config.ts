@@ -3,10 +3,11 @@ import { defineConfig } from 'wxt';
 export default defineConfig({
   modules: ['@wxt-dev/module-vue'],
   manifest: {
-    name: 'Nexus',
-    description: 'AI-Powered Browser Assistant',
-    version: '0.2.2',
+    name: '__MSG_appName__',
+    description: '__MSG_appDescription__',
+    version: '0.3.0',
     minimum_chrome_version: '120',
+    default_locale: 'en',
     permissions: [
       'storage',
       'activeTab',
@@ -15,6 +16,7 @@ export default defineConfig({
       'tabs',
       'tabGroups',
       'debugger',
+      'contextMenus',
     ],
     host_permissions: ['<all_urls>'],
     action: {

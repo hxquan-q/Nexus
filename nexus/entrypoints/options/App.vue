@@ -1545,7 +1545,7 @@ onMounted(async () => {
 
     <!-- Footer -->
     <footer class="options-footer">
-      Nexus v0.2.2
+      Nexus v0.3.0
     </footer>
 
     <!-- Confirmation dialog -->
