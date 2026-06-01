@@ -30,30 +30,42 @@ import {
   generateSessionTitle,
   type ChatSession,
 } from '../../utils/db';
-import { streamChat, getLastApiMessages, setLastApiMessages, ApiError, type ApiErrorCode } from '../../utils/api';
+import { getLastApiMessages, setLastApiMessages, ApiError, type ApiErrorCode } from '../../utils/api';
 import { renderMarkdown, decodeData, initChartRendering } from '../../utils/markdown';
 import { t as i18n } from '../../utils/i18n';
 import type { Language } from '../../utils/i18n';
 import { parseFile, detectFormat } from '../../utils/fileParser';
-import type { ChatMessage, ChatImage, ChatFileAttachment, ToolCall, ToolResult } from '../../utils/providers/types';
+import type { ChatMessage as ChatMessageType, ChatImage, ChatFileAttachment, ToolCall, ToolResult } from '../../utils/providers/types';
 import { getToolsAsOpenAIFunctions, isBrowserControlTool } from '../../utils/tools';
 import { mcpManager, mcpToolToOpenAITool, parseMcpToolName, isMcpTool, type McpTool } from '../../utils/mcp';
 import { getEnabledMcpServers, watchMcpServers } from '../../utils/mcpStorage';
 import { getAllSkills, getSkillsAsTools, getSkillFileAsText, type Skill } from '../../utils/skills';
 import { executeScript, setScriptConfirmCallback, type ScriptConfirmationRequest } from '../../utils/skillsExecutor';
+import { estimateMessagesTokens } from '../../utils/tokenCount';
+import { getAllTemplates, type ChatTemplate } from '../../utils/templates';
+import { useStreamChat } from '../../composables/useStreamChat';
+
+// Extracted components
+import ChatMessage from '../../components/ChatMessage.vue';
+import ModelSelector from '../../components/ModelSelector.vue';
+import SessionHistory from '../../components/SessionHistory.vue';
+import MessageInput from '../../components/MessageInput.vue';
+import CodeFullscreen from '../../components/CodeFullscreen.vue';
+
+// Alias for readability
+type ChatMessageData = ChatMessageType;
 
 // ============================================================
 // State
 // ============================================================
 
-const messages = shallowRef<ChatMessage[]>([]);
+const messages = shallowRef<ChatMessageData[]>([]);
 const inputText = ref('');
 const isLoading = ref(false);
 const showHistory = ref(false);
 const chatAreaRef = ref<HTMLElement | null>(null);
 const pendingImages = ref<ChatImage[]>([]);
 const pendingFiles = ref<ChatFileAttachment[]>([]);
-const isImageDragActive = ref(false);
 const chatAbortController = ref<AbortController | null>(null);
 const fullscreenCodeBlock = ref<{ code: string; language: string } | null>(null);
 
@@ -68,7 +80,6 @@ const SESSIONS_PAGE_SIZE = 15;
 // Provider state
 const providers = ref<StoredProvider[]>([]);
 const activeProviderId = ref<string | null>(null);
-const showModelSelector = ref(false);
 
 // Theme state
 const currentThemeMode = ref<ThemeMode>('system');
@@ -82,9 +93,6 @@ const reasoningExpanded = ref<Record<number, boolean>>({});
 // Image lightbox
 const lightboxImage = ref<string | null>(null);
 
-// History search
-const historySearchQuery = ref('');
-
 // Copied message feedback
 const copiedMessageIndex = ref<number | null>(null);
 
@@ -97,20 +105,6 @@ const showScrollToBottom = ref(false);
 
 // Context menu prompt (received from background)
 const contextMenuPrompt = ref<string | null>(null);
-
-// Textarea
-const textareaRef = ref<HTMLTextAreaElement | null>(null);
-const isInputComposing = ref(false);
-
-// Image limits
-const MAX_IMAGE_COUNT = 4;
-const MAX_IMAGE_SIZE_MB = 5;
-const MAX_IMAGE_SIZE_BYTES = MAX_IMAGE_SIZE_MB * 1024 * 1024;
-
-// File limits
-const MAX_FILE_SIZE_MB = 10;
-const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
-const MAX_TOTAL_ATTACHMENTS = 5;
 
 // Unwatch refs
 const unwatchProviders = ref<(() => void) | null>(null);
@@ -134,60 +128,6 @@ const lastErrorInfo = ref<{
   code: ApiErrorCode;
   rawError: string;
 } | null>(null);
-
-function extractErrorInfo(error: any): { message: string; code: ApiErrorCode; rawError: string } {
-  if (error instanceof ApiError) {
-    return {
-      message: error.message,
-      code: error.code,
-      rawError: `${error.code}${error.status ? ` (${error.status})` : ''}: ${error.message}`,
-    };
-  }
-  const message = error instanceof Error ? error.message : String(error);
-  return {
-    message,
-    code: 'UNKNOWN' as ApiErrorCode,
-    rawError: message,
-  };
-}
-
-function getErrorIcon(code: ApiErrorCode): string {
-  switch (code) {
-    case 'AUTH': return 'key';
-    case 'RATE_LIMIT': return 'clock';
-    case 'NETWORK': return 'wifi-off';
-    case 'MODEL_NOT_FOUND': return 'search';
-    case 'CONTEXT_LENGTH': return 'file-text';
-    default: return 'alert-circle';
-  }
-}
-
-function getErrorTitle(code: ApiErrorCode): string {
-  const lang = currentLanguage.value;
-  switch (code) {
-    case 'AUTH': return i18n(lang, 'error.auth');
-    case 'RATE_LIMIT': return i18n(lang, 'error.rateLimit');
-    case 'NETWORK': return i18n(lang, 'error.network');
-    case 'MODEL_NOT_FOUND': return i18n(lang, 'error.modelNotFound');
-    case 'CONTEXT_LENGTH': return i18n(lang, 'error.contextLength');
-    case 'PROVIDER_ERROR': return i18n(lang, 'error.providerError');
-    default: return i18n(lang, 'error.general', { message: '' });
-  }
-}
-
-// Throttled streaming render - avoid excessive DOM updates
-let streamRenderTimer: ReturnType<typeof requestAnimationFrame> | null = null;
-let streamContentDirty = false;
-const streamRenderThrottle = () => {
-  if (streamRenderTimer) return;
-  streamRenderTimer = requestAnimationFrame(() => {
-    streamRenderTimer = null;
-    if (streamContentDirty) {
-      streamContentDirty = false;
-      triggerRef(messages);
-    }
-  });
-};
 
 // Toast notification system
 const toastMessage = ref<string | null>(null);
@@ -236,6 +176,32 @@ const confirmationDialog = ref<{
   onCancel: () => void;
 } | null>(null);
 
+// Templates state
+const chatTemplates = ref<ChatTemplate[]>([]);
+
+// Context window state
+const contextUsagePercent = ref(0);
+const contextTokenEstimate = ref(0);
+const contextTokenMax = ref(128000);
+
+// Model selector ref
+const modelSelectorRef = ref<InstanceType<typeof ModelSelector> | null>(null);
+const messageInputRef = ref<InstanceType<typeof MessageInput> | null>(null);
+const fileInputRef = ref<HTMLInputElement | null>(null);
+
+// Image limits
+const MAX_IMAGE_COUNT = 4;
+const MAX_IMAGE_SIZE_MB = 5;
+const MAX_IMAGE_SIZE_BYTES = MAX_IMAGE_SIZE_MB * 1024 * 1024;
+
+// File limits
+const MAX_FILE_SIZE_MB = 10;
+const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
+const MAX_TOTAL_ATTACHMENTS = 5;
+
+// Throttled streaming render - now handled by useStreamChat composable
+const { runStream, clearStreamRenderState } = useStreamChat(messages);
+
 // ============================================================
 // Computed
 // ============================================================
@@ -254,111 +220,41 @@ const activeModelSupportsVision = computed(() => {
   return activeProvider.value.visionModels?.includes(activeProvider.value.selectedModel) ?? false;
 });
 
-const allModelOptions = computed(() => {
-  const options: { providerId: string; providerName: string; model: string }[] = [];
-  for (const p of providers.value) {
-    const models = Array.isArray(p.models) ? p.models : [];
-    for (const m of models) {
-      options.push({
-        providerId: p.id,
-        providerName: p.name,
-        model: m,
-      });
-    }
-  }
-  return options;
+const contextBarColor = computed(() => {
+  if (contextUsagePercent.value < 50) return 'var(--color-success)';
+  if (contextUsagePercent.value < 80) return '#ff9500';
+  return 'var(--color-error)';
 });
 
-const filteredModelOptions = computed(() => {
-  const query = modelSearchQuery.value.trim().toLowerCase();
-  if (!query) return allModelOptions.value;
-  return allModelOptions.value.filter(
-    (opt) =>
-      opt.model.toLowerCase().includes(query) ||
-      opt.providerName.toLowerCase().includes(query)
-  );
-});
+// ============================================================
+// Helpers
+// ============================================================
 
-/** Group filtered model options by provider for the dropdown UI */
-const groupedModelOptions = computed(() => {
-  const groups: { providerId: string; providerName: string; models: { model: string; isVision: boolean }[] }[] = [];
-  for (const opt of filteredModelOptions.value) {
-    let group = groups.find((g) => g.providerId === opt.providerId);
-    if (!group) {
-      group = { providerId: opt.providerId, providerName: opt.providerName, models: [] };
-      groups.push(group);
-    }
-    const provider = providers.value.find((p) => p.id === opt.providerId);
-    const isVision = provider?.visionModels?.includes(opt.model) ?? false;
-    group.models.push({ model: opt.model, isVision });
+function extractErrorInfo(error: any): { message: string; code: ApiErrorCode; rawError: string } {
+  if (error instanceof ApiError) {
+    return {
+      message: error.message,
+      code: error.code,
+      rawError: `${error.code}${error.status ? ` (${error.status})` : ''}: ${error.message}`,
+    };
   }
-  return groups;
-});
+  const message = error instanceof Error ? error.message : String(error);
+  return {
+    message,
+    code: 'UNKNOWN' as ApiErrorCode,
+    rawError: message,
+  };
+}
 
-const hasPendingImages = computed(() => pendingImages.value.length > 0);
-const hasPendingFiles = computed(() => pendingFiles.value.length > 0);
-const totalPendingAttachments = computed(() => pendingImages.value.length + pendingFiles.value.length);
-const canSendMessage = computed(() => {
-  return !isLoading.value && (inputText.value.trim().length > 0 || hasPendingImages.value || hasPendingFiles.value);
-});
-
-const filteredSessions = computed(() => {
-  const query = historySearchQuery.value.trim().toLowerCase();
-  if (!query) return sessions.value;
-  return sessions.value.filter((s) => {
-    if (s.title.toLowerCase().includes(query)) return true;
-    return s.messages.some((m) =>
-      m.content?.toLowerCase().includes(query)
-    );
-  });
-});
-
-/**
- * Group sessions by date for display.
- * Returns an array of { label, sessions } objects.
- */
-const groupedSessions = computed(() => {
-  const groups: { label: string; sessions: ChatSession[] }[] = [];
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const yesterday = new Date(today.getTime() - 86400000);
-  const thisWeekStart = new Date(today.getTime() - today.getDay() * 86400000);
-
-  const locale = currentLanguage.value === 'zh-CN' ? 'zh-CN' : 'en-US';
-
-  let todayGroup: ChatSession[] = [];
-  let yesterdayGroup: ChatSession[] = [];
-  let weekGroup: ChatSession[] = [];
-  let olderGroup: ChatSession[] = [];
-
-  for (const s of filteredSessions.value) {
-    const date = new Date(s.updatedAt);
-    if (date >= today) {
-      todayGroup.push(s);
-    } else if (date >= yesterday) {
-      yesterdayGroup.push(s);
-    } else if (date >= thisWeekStart) {
-      weekGroup.push(s);
-    } else {
-      olderGroup.push(s);
-    }
+function updateContextUsage() {
+  if (messages.value.length === 0) {
+    contextUsagePercent.value = 0;
+    contextTokenEstimate.value = 0;
+    return;
   }
-
-  if (todayGroup.length > 0) {
-    groups.push({ label: locale === 'zh-CN' ? '今天' : 'Today', sessions: todayGroup });
-  }
-  if (yesterdayGroup.length > 0) {
-    groups.push({ label: locale === 'zh-CN' ? '昨天' : 'Yesterday', sessions: yesterdayGroup });
-  }
-  if (weekGroup.length > 0) {
-    groups.push({ label: locale === 'zh-CN' ? '本周' : 'This Week', sessions: weekGroup });
-  }
-  if (olderGroup.length > 0) {
-    groups.push({ label: locale === 'zh-CN' ? '更早' : 'Older', sessions: olderGroup });
-  }
-
-  return groups;
-});
+  contextTokenEstimate.value = estimateMessagesTokens(messages.value as { content: string }[]);
+  contextUsagePercent.value = Math.min(100, Math.round((contextTokenEstimate.value / contextTokenMax.value) * 100));
+}
 
 function openLightbox(dataUrl: string) {
   lightboxImage.value = dataUrl;
@@ -368,94 +264,12 @@ function closeLightbox() {
   lightboxImage.value = null;
 }
 
-// ============================================================
-// Helpers
-// ============================================================
-
-function getFileIcon(format: string): string {
-  switch (format) {
-    case 'pdf': return '\u{1F4D1}';
-    case 'docx': return '\u{1F4C4}';
-    case 'csv': return '\u{1F4CA}';
-    case 'md': return '\u{1F4DD}';
-    case 'txt': return '\u{1F4C3}';
-    default: return '\u{1F4CE}';
-  }
-}
-
-/**
- * Get display content for user messages.
- * Strips file context blocks that were injected for the AI.
- */
-function getUserMessageDisplayContent(message: ChatMessage): string {
-  if (!message.content) return '';
-  // If there are file attachments, the content has file context injected.
-  // Show just the original user text before the "---" separator.
-  if (message.fileAttachments && message.fileAttachments.length > 0) {
-    const separatorIndex = message.content.indexOf('\n\n---\n\n');
-    if (separatorIndex !== -1) {
-      return message.content.substring(0, separatorIndex).trim();
-    }
-  }
-  return message.content;
-}
-
-function parseErrorContent(content: string): { message: string; code: ApiErrorCode; rawError: string } | null {
-  try {
-    const jsonStr = content.replace('__ERROR__:', '');
-    return JSON.parse(jsonStr);
-  } catch {
-    return null;
-  }
-}
-
-async function copyErrorDetails(rawError: string): Promise<void> {
-  const copied = await writeTextToClipboard(rawError);
-  if (copied) {
-    showToast('Error details copied to clipboard');
-  }
-}
-
-function formatTime(timestamp: number): string {
-  const date = new Date(timestamp);
-  const now = new Date();
-  const isToday = date.toDateString() === now.toDateString();
-  const locale = currentLanguage.value === 'zh-CN' ? 'zh-CN' : 'en-US';
-
-  if (isToday) {
-    return date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
-  }
-  return date.toLocaleDateString(locale, {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
-
-function formatSessionDate(timestamp: number): string {
-  const date = new Date(timestamp);
-  const locale = currentLanguage.value === 'zh-CN' ? 'zh-CN' : 'en-US';
-  return date.toLocaleDateString(locale, {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
-
-function toggleReasoning(idx: number) {
-  reasoningExpanded.value[idx] = !reasoningExpanded.value[idx];
-}
-
-// Auto-scroll management: stop scrolling if user scrolls up
+// Auto-scroll management
 let isUserScrolledUp = false;
 
 const checkUserScroll = () => {
   const el = chatAreaRef.value;
   if (!el) return;
-  // If user is more than 100px from bottom, consider them scrolled up
   const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
   isUserScrolledUp = distFromBottom > 100;
   showScrollToBottom.value = distFromBottom > 200;
@@ -515,7 +329,19 @@ function startEditMessage(index: number): void {
   const message = messages.value[index];
   if (message.role !== 'user') return;
   editingMessageIndex.value = index;
-  editingMessageText.value = getUserMessageDisplayContent(message);
+  const displayContent = getUserMessageDisplayContent(message);
+  editingMessageText.value = displayContent;
+}
+
+function getUserMessageDisplayContent(message: ChatMessageData): string {
+  if (!message.content) return '';
+  if (message.fileAttachments && message.fileAttachments.length > 0) {
+    const separatorIndex = message.content.indexOf('\n\n---\n\n');
+    if (separatorIndex !== -1) {
+      return message.content.substring(0, separatorIndex).trim();
+    }
+  }
+  return message.content;
 }
 
 function cancelEditMessage(): void {
@@ -529,12 +355,10 @@ async function saveEditMessage(): Promise<void> {
   const newText = editingMessageText.value.trim();
   if (!newText) return;
 
-  // Truncate messages to remove everything after the edited message
   const truncated = messages.value.slice(0, index);
   const editedMessage = { ...messages.value[index] };
   editedMessage.content = newText;
   editedMessage.timestamp = Date.now();
-  // Clear file/quote references for simplicity on edit
   editedMessage.fileAttachments = undefined;
   editedMessage.images = undefined;
   editedMessage.quote = undefined;
@@ -545,25 +369,18 @@ async function saveEditMessage(): Promise<void> {
   editingMessageIndex.value = null;
   editingMessageText.value = '';
 
-  // Save and resend
   await saveCurrentSession();
-  // Trigger resend from this point
   await resendFromLastUserMessage();
 }
 
 async function resendFromLastUserMessage(): Promise<void> {
-  // Find the last user message
   const lastUserIdx = messages.value.findLastIndex((m) => m.role === 'user');
   if (lastUserIdx === -1) return;
 
-  // Use messages up to and including the last user message
   const messagesForApi = messages.value.slice(0, lastUserIdx + 1);
-
-  // Set messages and trigger send
   messages.value = messagesForApi;
   triggerRef(messages);
 
-  // Now send with the existing messages
   await sendWithExistingMessages();
 }
 
@@ -595,119 +412,42 @@ async function sendWithExistingMessages(): Promise<void> {
   const skillTools = getSkillsAsTools(loadedSkills.value);
   openaiTools.push(...skillTools);
 
-  let assistantMessage: ChatMessage | null = null;
   try {
-    assistantMessage = {
-      role: 'assistant',
-      content: '',
-      timestamp: Date.now(),
-    };
-    messages.value.push(assistantMessage);
-    triggerRef(messages);
-    scrollToBottom();
-
-    for await (const event of streamChat(provider, messages.value.slice(0, -1), {
+    await runStream(provider, messages.value.slice(0, -1), {
       abortSignal: chatAbortController.value.signal,
       tools: openaiTools,
       toolExecutor: executeToolCall,
       maxToolIterations: 10,
-    })) {
-      switch (event.type) {
-        case 'reasoning':
-          if (!assistantMessage.reasoning) assistantMessage.reasoning = '';
-          assistantMessage.reasoning += event.content;
-          streamContentDirty = true;
-          streamRenderThrottle();
-          break;
-        case 'content':
-          assistantMessage.content += event.content;
-          streamContentDirty = true;
-          streamRenderThrottle();
-          scrollToBottom();
-          break;
-        case 'thinking':
-          break;
-        case 'tool_call':
-          if (event.toolCall) {
-            const toolName = event.toolCall.name.replace('browser_', '').replace(/_/g, ' ');
-            const toolArgs = event.toolCall.arguments;
-            let toolDescription = `**Tool: ${toolName}**`;
-            if (toolArgs.url) toolDescription += ` -> ${toolArgs.url}`;
-            if (toolArgs.uid) toolDescription += ` (element: ${toolArgs.uid})`;
-            if (toolArgs.key) toolDescription += ` (${toolArgs.key})`;
-            if (toolArgs.text) toolDescription += ` "${String(toolArgs.text).substring(0, 50)}"`;
-            assistantMessage.content += `\n> ${toolDescription}\n\n`;
-            triggerRef(messages);
-            scrollToBottom();
-          }
-          break;
-        case 'tool_result':
-          break;
-        case 'done':
-          assistantMessage.content = assistantMessage.content.trim();
-          if (assistantMessage.reasoning) {
-            assistantMessage.reasoning = assistantMessage.reasoning.trim();
-          }
-          triggerRef(messages);
-          break;
-      }
-    }
-    assistantMessage.timestamp = Date.now();
-  } catch (error: any) {
-    const isUserAborted = error instanceof ApiError && error.code === 'ABORTED';
-    if (isUserAborted) {
-      if (assistantMessage && !assistantMessage.content.trim() && !(assistantMessage.reasoning || '').trim()) {
-        const lastMessage = messages.value[messages.value.length - 1];
-        if (lastMessage === assistantMessage) {
-          messages.value.pop();
-          triggerRef(messages);
-        }
-      } else if (assistantMessage) {
-        // Partial response was received, mark as interrupted
-        assistantMessage.content = (assistantMessage.content || '').trim();
-        if (assistantMessage.content) {
-          assistantMessage.content += '\n\n---\n*Generation interrupted.*';
-          triggerRef(messages);
-        }
-      }
-    } else {
-      // Remove the empty assistant message
-      if (assistantMessage) {
-        const lastMessage = messages.value[messages.value.length - 1];
-        if (lastMessage === assistantMessage) {
-          messages.value.pop();
-          triggerRef(messages);
-        }
-      }
-      const errorInfo = extractErrorInfo(error);
-      lastErrorInfo.value = errorInfo;
-      messages.value.push({
-        role: 'assistant',
-        content: `__ERROR__:${JSON.stringify(errorInfo)}`,
-        timestamp: Date.now(),
-      });
-      triggerRef(messages);
-    }
+    }, {
+      onAssistantMessageCreated: () => scrollToBottom(),
+      onContentUpdate: () => scrollToBottom(),
+      onError: (errorInfo) => {
+        lastErrorInfo.value = errorInfo;
+        messages.value.push({
+          role: 'assistant',
+          content: `__ERROR__:${JSON.stringify(errorInfo)}`,
+          timestamp: Date.now(),
+        });
+        triggerRef(messages);
+      },
+      onAborted: () => {},
+    });
   } finally {
     chatAbortController.value = null;
     isLoading.value = false;
     toolExecutionStatus.value = null;
-    streamContentDirty = false;
-    if (streamRenderTimer) {
-      cancelAnimationFrame(streamRenderTimer);
-      streamRenderTimer = null;
-    }
+    clearStreamRenderState();
     if (saveTimer) {
       clearTimeout(saveTimer);
       saveTimer = null;
     }
     await saveCurrentSession();
+    updateContextUsage();
     scrollToBottom();
   }
 }
 
 async function regenerateLastResponse(): Promise<void> {
-  // Remove the last assistant message
   const lastMsg = messages.value[messages.value.length - 1];
   if (lastMsg?.role === 'assistant') {
     messages.value.pop();
@@ -717,18 +457,14 @@ async function regenerateLastResponse(): Promise<void> {
 }
 
 async function deleteMessagePair(index: number): Promise<void> {
-  // Delete a user message and the assistant response that follows
   const message = messages.value[index];
   if (message.role !== 'user') return;
 
   const truncated = messages.value.slice(0, index);
-  // Also remove the assistant response if it exists right after
-  if (index + 1 < messages.value.length && messages.value[index + 1].role === 'assistant') {
-    // Already truncated to before index, so both are removed
-  }
   messages.value = truncated;
   triggerRef(messages);
   await saveCurrentSession();
+  updateContextUsage();
 }
 
 // ============================================================
@@ -790,7 +526,6 @@ async function handleMarkdownActionClick(event: MouseEvent): Promise<void> {
 }
 
 function handleGlobalKeydown(event: KeyboardEvent): void {
-  // Escape: close modals or cancel generation
   if (event.key === 'Escape') {
     if (lightboxImage.value) {
       closeLightbox();
@@ -804,14 +539,12 @@ function handleGlobalKeydown(event: KeyboardEvent): void {
     return;
   }
 
-  // Ctrl+N: New chat
   if (event.ctrlKey && event.key === 'n') {
     event.preventDefault();
     newChat();
     return;
   }
 
-  // Ctrl+H: Toggle history panel
   if (event.ctrlKey && event.key === 'h') {
     event.preventDefault();
     if (showHistory.value) {
@@ -822,14 +555,12 @@ function handleGlobalKeydown(event: KeyboardEvent): void {
     return;
   }
 
-  // Ctrl+,: Open settings
   if (event.ctrlKey && event.key === ',') {
     event.preventDefault();
     openSettings();
     return;
   }
 
-  // Ctrl+Shift+C: Copy last assistant message
   if (event.ctrlKey && event.shiftKey && event.key === 'C') {
     event.preventDefault();
     const lastAssistantIdx = messages.value.findLastIndex((m) => m.role === 'assistant');
@@ -841,10 +572,8 @@ function handleGlobalKeydown(event: KeyboardEvent): void {
 }
 
 // ============================================================
-// Image & File handling
+// Image & File handling (delegated to App-level since it manages state)
 // ============================================================
-
-const imageInputRef = ref<HTMLInputElement | null>(null);
 
 function removePendingImage(imageId: string): void {
   pendingImages.value = pendingImages.value.filter((image) => image.id !== imageId);
@@ -853,12 +582,6 @@ function removePendingImage(imageId: string): void {
 function removePendingFile(fileId: string): void {
   pendingFiles.value = pendingFiles.value.filter((f) => f.id !== fileId);
 }
-
-function openImagePicker(): void {
-  imageInputRef.value?.click();
-}
-
-const fileInputRef = ref<HTMLInputElement | null>(null);
 
 function openFilePicker(): void {
   fileInputRef.value?.click();
@@ -890,7 +613,8 @@ async function addPendingImageFiles(fileList: FileList | File[]): Promise<void> 
   const imageFiles = files.filter(isSupportedImageFile);
   if (imageFiles.length === 0) return;
 
-  const availableSlots = Math.max(0, MAX_TOTAL_ATTACHMENTS - totalPendingAttachments.value);
+  const totalAttachments = pendingImages.value.length + pendingFiles.value.length;
+  const availableSlots = Math.max(0, MAX_TOTAL_ATTACHMENTS - totalAttachments);
   if (availableSlots <= 0) return;
 
   const filesToProcess = imageFiles.slice(0, availableSlots);
@@ -919,7 +643,8 @@ async function addPendingDocumentFiles(fileList: FileList | File[]): Promise<voi
   const docFiles = files.filter(isSupportedDocumentFile);
   if (docFiles.length === 0) return;
 
-  const availableSlots = Math.max(0, MAX_TOTAL_ATTACHMENTS - totalPendingAttachments.value);
+  const totalAttachments = pendingImages.value.length + pendingFiles.value.length;
+  const availableSlots = Math.max(0, MAX_TOTAL_ATTACHMENTS - totalAttachments);
   if (availableSlots <= 0) return;
 
   const filesToProcess = docFiles.slice(0, availableSlots);
@@ -958,40 +683,6 @@ async function handleFileInputChange(event: Event): Promise<void> {
   input.value = '';
 }
 
-function handleInputBoxDragEnter(event: DragEvent): void {
-  if (event.dataTransfer?.types.includes('Files')) {
-    isImageDragActive.value = true;
-  }
-}
-
-function handleInputBoxDragOver(event: DragEvent): void {
-  if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
-  isImageDragActive.value = true;
-}
-
-function handleInputBoxDragLeave(event: DragEvent): void {
-  const currentTarget = event.currentTarget as HTMLElement | null;
-  const relatedTarget = event.relatedTarget as Node | null;
-  if (currentTarget && relatedTarget && currentTarget.contains(relatedTarget)) return;
-  isImageDragActive.value = false;
-}
-
-async function handleInputBoxDrop(event: DragEvent): Promise<void> {
-  isImageDragActive.value = false;
-  if (!event.dataTransfer?.files?.length) return;
-
-  const files = Array.from(event.dataTransfer.files);
-  const imageFiles = files.filter(isSupportedImageFile);
-  const docFiles = files.filter(isSupportedDocumentFile);
-
-  if (imageFiles.length > 0 && activeModelSupportsVision.value) {
-    await addPendingImageFiles(imageFiles);
-  }
-  if (docFiles.length > 0) {
-    await addPendingDocumentFiles(docFiles);
-  }
-}
-
 async function handleInputPaste(event: ClipboardEvent): Promise<void> {
   if (!event.clipboardData) return;
 
@@ -1008,35 +699,34 @@ async function handleInputPaste(event: ClipboardEvent): Promise<void> {
   await addPendingImageFiles(imageFiles);
 }
 
-// ============================================================
-// Textarea auto-resize
-// ============================================================
+function handleInputDrop(event: DragEvent): Promise<void> {
+  if (!event.dataTransfer?.files?.length) return Promise.resolve();
 
-function handleCompositionStart() {
-  isInputComposing.value = true;
+  const files = Array.from(event.dataTransfer.files);
+  const imageFiles = files.filter(isSupportedImageFile);
+  const docFiles = files.filter(isSupportedDocumentFile);
+
+  const promises: Promise<void>[] = [];
+  if (imageFiles.length > 0 && activeModelSupportsVision.value) {
+    promises.push(addPendingImageFiles(imageFiles));
+  }
+  if (docFiles.length > 0) {
+    promises.push(addPendingDocumentFiles(docFiles));
+  }
+  return Promise.all(promises).then(() => {});
 }
 
-function handleCompositionEnd() {
-  isInputComposing.value = false;
+function handleInputDragEnter(event: DragEvent): void {
+  // handled by MessageInput component
 }
 
-function autoResizeTextarea() {
-  const textarea = textareaRef.value;
-  if (!textarea) return;
-
-  textarea.style.height = 'auto';
-  const lineHeight = 22;
-  const maxLines = 6;
-  const maxHeight = lineHeight * maxLines;
-  const paddingY = 24;
-
-  const newHeight = Math.min(textarea.scrollHeight, maxHeight + paddingY);
-  textarea.style.height = `${newHeight}px`;
+function handleInputDragOver(event: DragEvent): void {
+  // handled by MessageInput component
 }
 
-watch(inputText, () => {
-  nextTick(autoResizeTextarea);
-});
+function handleInputDragLeave(event: DragEvent): void {
+  // handled by MessageInput component
+}
 
 // ============================================================
 // Browser automation & tool execution
@@ -1088,9 +778,7 @@ async function executeToolCall(toolCall: ToolCall): Promise<ToolResult> {
   const args = toolCall.arguments;
 
   try {
-    // Browser control tools (require CDP)
     if (isBrowserControlTool(name) && name !== 'browser_take_screenshot') {
-      // Auto-start automation if not active
       if (!browserAutomationActive.value) {
         const tab = await getActiveTab();
         if (tab?.id) {
@@ -1112,7 +800,6 @@ async function executeToolCall(toolCall: ToolCall): Promise<ToolResult> {
       const resultText = response?.result || response?.error || 'Tool executed';
       toolExecutionStatus.value = null;
 
-      // Check if the result contains a screenshot data URL
       if (typeof resultText === 'string' && resultText.startsWith('[SCREENSHOT:')) {
         const dataUrl = resultText.substring('[SCREENSHOT:'.length, resultText.length - 1);
         return { tool_call_id: toolCall.id, name, result: 'Screenshot captured successfully. The screenshot has been provided as an image.', success: true };
@@ -1121,7 +808,6 @@ async function executeToolCall(toolCall: ToolCall): Promise<ToolResult> {
       return { tool_call_id: toolCall.id, name, result: resultText, success: !resultText.startsWith('Error') };
     }
 
-    // Screenshot tool
     if (name === 'browser_take_screenshot') {
       toolExecutionStatus.value = 'Taking screenshot...';
       const response = await browser.runtime.sendMessage({ type: 'TAKE_SCREENSHOT' });
@@ -1133,7 +819,6 @@ async function executeToolCall(toolCall: ToolCall): Promise<ToolResult> {
       return { tool_call_id: toolCall.id, name, result: response?.error || 'Failed to take screenshot', success: false };
     }
 
-    // Page content extraction
     if (name === 'extract_page_content') {
       toolExecutionStatus.value = 'Extracting page content...';
       const tab = await getActiveTab();
@@ -1159,7 +844,6 @@ async function executeToolCall(toolCall: ToolCall): Promise<ToolResult> {
       return { tool_call_id: toolCall.id, name, result: formatted, success: true };
     }
 
-    // YouTube transcript extraction
     if (name === 'extract_youtube_transcript') {
       toolExecutionStatus.value = 'Extracting video transcript...';
       const tab = await getActiveTab();
@@ -1183,7 +867,6 @@ async function executeToolCall(toolCall: ToolCall): Promise<ToolResult> {
       return { tool_call_id: toolCall.id, name, result: formatted, success: true };
     }
 
-    // MCP tool calls
     if (isMcpTool(name)) {
       const parsed = parseMcpToolName(name);
       if (!parsed) {
@@ -1201,7 +884,6 @@ async function executeToolCall(toolCall: ToolCall): Promise<ToolResult> {
       }
     }
 
-    // Skill tool calls
     if (name === 'activate_skill') {
       const skillName = args.name as string;
       if (!skillName) {
@@ -1409,7 +1091,6 @@ async function sendMessage() {
   const messageImages = pendingImages.value.map((image) => ({ ...image }));
   const messageFiles = pendingFiles.value.map((f) => ({ ...f }));
 
-  // Build the content string: include file text as context
   let messageContent = text;
   if (messageFiles.length > 0) {
     const fileContexts = messageFiles.map((f) => `[File: ${f.name}]\n${f.text}`).join('\n\n');
@@ -1420,7 +1101,6 @@ async function sendMessage() {
     }
   }
 
-  // Inject page content if share is enabled
   if (sharePageContentEnabled.value) {
     const pageContent = await extractCurrentPageContent();
     if (pageContent) {
@@ -1428,7 +1108,7 @@ async function sendMessage() {
     }
   }
 
-  const userMessage: ChatMessage = {
+  const userMessage: ChatMessageData = {
     role: 'user',
     content: messageContent,
     timestamp: Date.now(),
@@ -1439,139 +1119,56 @@ async function sendMessage() {
   messages.value.push(userMessage);
   triggerRef(messages);
   inputText.value = '';
+  if (messageInputRef.value) {
+    messageInputRef.value.text = '';
+  }
   pendingImages.value = [];
   pendingFiles.value = [];
-  isImageDragActive.value = false;
   scrollToBottom();
 
   if (messages.value.length === 1) {
     currentSession.value.title = await generateSessionTitle(text || (hasImages ? 'Image' : (hasFiles ? 'File' : 'Chat')));
   }
 
-  // Prepare tools for the AI (browser control + extraction + MCP + skills)
   const openaiTools = getToolsAsOpenAIFunctions() as any;
-
-  // Add MCP tools
   for (const mcpTool of mcpTools.value) {
     openaiTools.push(mcpToolToOpenAITool(mcpTool));
   }
-
-  // Add skill tools
   const skillTools = getSkillsAsTools(loadedSkills.value);
   openaiTools.push(...skillTools);
 
-  let assistantMessage: ChatMessage | null = null;
   try {
-    // Signal streaming start to background
     browser.runtime.sendMessage({ type: 'STREAM_START', sessionId: currentSession.value?.id }).catch(() => {});
-    assistantMessage = {
-      role: 'assistant',
-      content: '',
-      timestamp: Date.now(),
-    };
-    messages.value.push(assistantMessage);
-    triggerRef(messages);
-    scrollToBottom();
-
-    for await (const event of streamChat(provider, messages.value.slice(0, -1), {
+    await runStream(provider, messages.value.slice(0, -1), {
       abortSignal: chatAbortController.value.signal,
       tools: openaiTools,
       toolExecutor: executeToolCall,
       maxToolIterations: 10,
-    })) {
-      switch (event.type) {
-        case 'reasoning':
-          if (!assistantMessage.reasoning) assistantMessage.reasoning = '';
-          assistantMessage.reasoning += event.content;
-          streamContentDirty = true;
-          streamRenderThrottle();
-          break;
-        case 'content':
-          assistantMessage.content += event.content;
-          streamContentDirty = true;
-          streamRenderThrottle();
-          scrollToBottom();
-          break;
-        case 'thinking':
-          // Could show thinking indicator
-          break;
-        case 'tool_call':
-          // Show tool execution in chat
-          if (event.toolCall) {
-            const toolName = event.toolCall.name.replace('browser_', '').replace(/_/g, ' ');
-            const toolArgs = event.toolCall.arguments;
-            let toolDescription = `**Tool: ${toolName}**`;
-            if (toolArgs.url) toolDescription += ` -> ${toolArgs.url}`;
-            if (toolArgs.uid) toolDescription += ` (element: ${toolArgs.uid})`;
-            if (toolArgs.key) toolDescription += ` (${toolArgs.key})`;
-            if (toolArgs.text) toolDescription += ` "${String(toolArgs.text).substring(0, 50)}"`;
-            assistantMessage.content += `\n> ${toolDescription}\n\n`;
-            triggerRef(messages);
-            scrollToBottom();
-          }
-          break;
-        case 'tool_result':
-          // Tool results handled internally by ReAct loop
-          break;
-        case 'done':
-          assistantMessage.content = assistantMessage.content.trim();
-          if (assistantMessage.reasoning) {
-            assistantMessage.reasoning = assistantMessage.reasoning.trim();
-          }
-          triggerRef(messages);
-          break;
-      }
-    }
-
-    assistantMessage.timestamp = Date.now();
-  } catch (error: any) {
-    const isUserAborted = error instanceof ApiError && error.code === 'ABORTED';
-    if (isUserAborted) {
-      if (assistantMessage && !assistantMessage.content.trim() && !(assistantMessage.reasoning || '').trim()) {
-        const lastMessage = messages.value[messages.value.length - 1];
-        if (lastMessage === assistantMessage) {
-          messages.value.pop();
-          triggerRef(messages);
-        }
-      } else if (assistantMessage) {
-        assistantMessage.content = (assistantMessage.content || '').trim();
-        if (assistantMessage.content) {
-          assistantMessage.content += '\n\n---\n*Generation interrupted.*';
-          triggerRef(messages);
-        }
-      }
-    } else {
-      if (assistantMessage) {
-        const lastMessage = messages.value[messages.value.length - 1];
-        if (lastMessage === assistantMessage) {
-          messages.value.pop();
-          triggerRef(messages);
-        }
-      }
-      const errorInfo = extractErrorInfo(error);
-      lastErrorInfo.value = errorInfo;
-      messages.value.push({
-        role: 'assistant',
-        content: `__ERROR__:${JSON.stringify(errorInfo)}`,
-        timestamp: Date.now(),
-      });
-      triggerRef(messages);
-    }
+    }, {
+      onAssistantMessageCreated: () => scrollToBottom(),
+      onContentUpdate: () => scrollToBottom(),
+      onError: (errorInfo) => {
+        lastErrorInfo.value = errorInfo;
+        messages.value.push({
+          role: 'assistant',
+          content: `__ERROR__:${JSON.stringify(errorInfo)}`,
+          timestamp: Date.now(),
+        });
+        triggerRef(messages);
+      },
+      onAborted: () => {},
+    });
   } finally {
     chatAbortController.value = null;
     isLoading.value = false;
     toolExecutionStatus.value = null;
-    streamContentDirty = false;
-    if (streamRenderTimer) {
-      cancelAnimationFrame(streamRenderTimer);
-      streamRenderTimer = null;
-    }
-    // Clear any pending debounced save and do a final save
+    clearStreamRenderState();
     if (saveTimer) {
       clearTimeout(saveTimer);
       saveTimer = null;
     }
     await saveCurrentSession();
+    updateContextUsage();
     scrollToBottom();
   }
 }
@@ -1609,10 +1206,6 @@ async function saveCurrentSession() {
   await loadInitialSessions();
 }
 
-/**
- * Debounced version of saveCurrentSession.
- * Prevents excessive IndexedDB writes during streaming.
- */
 function debouncedSave() {
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
@@ -1642,23 +1235,14 @@ async function loadMoreSessions() {
   }
 }
 
-const sessionListRef = ref<HTMLElement | null>(null);
-
-function handleSessionListScroll(e: Event) {
-  const el = e.target as HTMLElement;
-  if (el.scrollHeight - el.scrollTop - el.clientHeight < 50) {
-    loadMoreSessions();
-  }
-}
-
 async function newChat() {
   currentSession.value = null;
   messages.value = [];
   setLastApiMessages([]);
   pendingImages.value = [];
   pendingFiles.value = [];
-  isImageDragActive.value = false;
   showHistory.value = false;
+  updateContextUsage();
 }
 
 async function openHistory() {
@@ -1675,11 +1259,11 @@ async function loadSession(session: ChatSession) {
     setLastApiMessages([]);
   }
   showHistory.value = false;
+  updateContextUsage();
   scrollToBottom();
 }
 
-async function removeSession(id: string, e: Event) {
-  e.stopPropagation();
+async function removeSession(id: string) {
   if (confirm(i18n(currentLanguage.value, 'history.deleteConfirm'))) {
     await deleteSession(id);
     sessions.value = await getAllSessions();
@@ -1694,31 +1278,8 @@ async function removeSession(id: string, e: Event) {
   }
 }
 
-// Session rename state
-const renamingSessionId = ref<string | null>(null);
-const renameInput = ref('');
-
-function startRenameSession(session: ChatSession, e: Event) {
-  e.stopPropagation();
-  renamingSessionId.value = session.id;
-  renameInput.value = session.title;
-  nextTick(() => {
-    const input = document.querySelector('.rename-input') as HTMLInputElement;
-    if (input) {
-      input.focus();
-      input.select();
-    }
-  });
-}
-
-async function finishRenameSession() {
-  if (!renamingSessionId.value) return;
-  const id = renamingSessionId.value;
-  const newTitle = renameInput.value.trim();
-  renamingSessionId.value = null;
-
+async function renameSession(id: string, newTitle: string) {
   if (!newTitle) return;
-
   const session = sessions.value.find((s) => s.id === id);
   if (!session || session.title === newTitle) return;
 
@@ -1728,11 +1289,6 @@ async function finishRenameSession() {
   }
   await saveCurrentSession();
   await loadInitialSessions();
-}
-
-function cancelRenameSession() {
-  renamingSessionId.value = null;
-  renameInput.value = '';
 }
 
 // ============================================================
@@ -1785,12 +1341,10 @@ async function handleImportSession(event: Event) {
 // ============================================================
 
 async function selectProviderModel(providerId: string, model: string) {
-  // Load all providers from storage (do not return early if no active provider)
   const allProviders = await getAllProviders();
   const target = allProviders.find((p) => p.id === providerId);
   if (!target) return;
 
-  // Validate the model exists in the provider's list
   if (!target.models.includes(model)) {
     console.error('Model not found in provider:', model, target.models);
     return;
@@ -1803,7 +1357,6 @@ async function selectProviderModel(providerId: string, model: string) {
 
   await setActiveProviderId(providerId);
   activeProviderId.value = providerId;
-  showModelSelector.value = false;
 }
 
 // ============================================================
@@ -1826,8 +1379,7 @@ async function toggleTheme() {
 }
 
 // ============================================================
-// Model selector search
-const modelSearchQuery = ref('');
+// Selection quote
 // ============================================================
 
 function getSelectionEndPosition(): { x: number; y: number } | null {
@@ -1856,10 +1408,13 @@ function hideSelectionQuotePopup(): void {
 function useSidepanelSelectionQuote(): void {
   if (!selectionQuotePopup.value.text) return;
   inputText.value = `[Quote: "${selectionQuotePopup.value.text}"]\n\n` + inputText.value;
+  if (messageInputRef.value) {
+    messageInputRef.value.text = inputText.value;
+  }
   hideSelectionQuotePopup();
   window.getSelection()?.removeAllRanges();
   nextTick(() => {
-    textareaRef.value?.focus();
+    messageInputRef.value?.focus();
   });
 }
 
@@ -1901,17 +1456,6 @@ function handleSidepanelSelectionMousedown(event: MouseEvent): void {
 }
 
 // ============================================================
-// Key handlers
-// ============================================================
-
-function handleKeydown(e: KeyboardEvent) {
-  if (e.key === 'Enter' && !e.shiftKey && !isInputComposing.value && !e.isComposing) {
-    e.preventDefault();
-    sendMessage();
-  }
-}
-
-// ============================================================
 // Content script message handler
 // ============================================================
 
@@ -1922,7 +1466,6 @@ function handleContentMessage(message: any): void {
 
   switch (message.type) {
     case 'CONTENT_IMAGE_TO_CHAT': {
-      // Image sent from content script (screenshot capture)
       if (message.imageUrl) {
         handleContentImageMessage(message.imageUrl, message.prompt || 'What is in this screenshot?');
       }
@@ -1935,9 +1478,11 @@ function handleContentMessage(message: any): void {
       break;
     }
     case 'CONTEXT_MENU_ACTION': {
-      // Context menu action from background script
       if (message.prompt) {
         inputText.value = message.prompt;
+        if (messageInputRef.value) {
+          messageInputRef.value.text = message.prompt;
+        }
         nextTick(() => {
           sendMessage();
         });
@@ -1968,7 +1513,7 @@ async function handleContentImageMessage(imageUrl: string, prompt: string): Prom
     await loadInitialSessions();
   }
 
-  const userMessage: ChatMessage = {
+  const userMessage: ChatMessageData = {
     role: 'user',
     content: prompt,
     timestamp: Date.now(),
@@ -1990,105 +1535,61 @@ async function handleContentImageMessage(imageUrl: string, prompt: string): Prom
 
   const openaiTools = getToolsAsOpenAIFunctions() as any;
 
-  let assistantMessage: ChatMessage | null = null;
   try {
-    assistantMessage = {
-      role: 'assistant',
-      content: '',
-      timestamp: Date.now(),
-    };
-    messages.value.push(assistantMessage);
-    triggerRef(messages);
-    scrollToBottom();
-
-    for await (const event of streamChat(provider, messages.value.slice(0, -1), {
+    await runStream(provider, messages.value.slice(0, -1), {
       abortSignal: chatAbortController.value.signal,
       tools: openaiTools,
       toolExecutor: executeToolCall,
       maxToolIterations: 10,
-    })) {
-      switch (event.type) {
-        case 'reasoning':
-          if (!assistantMessage.reasoning) assistantMessage.reasoning = '';
-          assistantMessage.reasoning += event.content;
-          streamContentDirty = true;
-          streamRenderThrottle();
-          break;
-        case 'content':
-          assistantMessage.content += event.content;
-          streamContentDirty = true;
-          streamRenderThrottle();
-          scrollToBottom();
-          break;
-        case 'tool_call':
-          if (event.toolCall) {
-            const toolName = event.toolCall.name.replace('browser_', '').replace(/_/g, ' ');
-            assistantMessage.content += `\n> **Tool: ${toolName}**\n\n`;
-            triggerRef(messages);
-            scrollToBottom();
-          }
-          break;
-        case 'done':
-          assistantMessage.content = assistantMessage.content.trim();
-          if (assistantMessage.reasoning) {
-            assistantMessage.reasoning = assistantMessage.reasoning.trim();
-          }
-          triggerRef(messages);
-          break;
-      }
-    }
-
-    assistantMessage.timestamp = Date.now();
-  } catch (error: any) {
-    const isUserAborted = error instanceof ApiError && error.code === 'ABORTED';
-    if (isUserAborted) {
-      if (assistantMessage && !assistantMessage.content.trim() && !(assistantMessage.reasoning || '').trim()) {
-        const lastMessage = messages.value[messages.value.length - 1];
-        if (lastMessage === assistantMessage) {
-          messages.value.pop();
-          triggerRef(messages);
-        }
-      } else if (assistantMessage) {
-        assistantMessage.content = (assistantMessage.content || '').trim();
-        if (assistantMessage.content) {
-          assistantMessage.content += '\n\n---\n*Generation interrupted.*';
-          triggerRef(messages);
-        }
-      }
-    } else {
-      if (assistantMessage) {
-        const lastMessage = messages.value[messages.value.length - 1];
-        if (lastMessage === assistantMessage) {
-          messages.value.pop();
-          triggerRef(messages);
-        }
-      }
-      const errorInfo = extractErrorInfo(error);
-      lastErrorInfo.value = errorInfo;
-      messages.value.push({
-        role: 'assistant',
-        content: `__ERROR__:${JSON.stringify(errorInfo)}`,
-        timestamp: Date.now(),
-      });
-      triggerRef(messages);
-    }
+    }, {
+      onAssistantMessageCreated: () => scrollToBottom(),
+      onContentUpdate: () => scrollToBottom(),
+      onError: (errorInfo) => {
+        lastErrorInfo.value = errorInfo;
+        messages.value.push({
+          role: 'assistant',
+          content: `__ERROR__:${JSON.stringify(errorInfo)}`,
+          timestamp: Date.now(),
+        });
+        triggerRef(messages);
+      },
+      onAborted: () => {},
+    });
   } finally {
     chatAbortController.value = null;
     isLoading.value = false;
     toolExecutionStatus.value = null;
-    streamContentDirty = false;
-    if (streamRenderTimer) {
-      cancelAnimationFrame(streamRenderTimer);
-      streamRenderTimer = null;
-    }
-    // Clear any pending debounced save and do a final save
+    clearStreamRenderState();
     if (saveTimer) {
       clearTimeout(saveTimer);
       saveTimer = null;
     }
     await saveCurrentSession();
+    updateContextUsage();
     scrollToBottom();
   }
+}
+
+// ============================================================
+// Template handling
+// ============================================================
+
+async function startTemplate(template: ChatTemplate) {
+  if (!activeProvider.value) {
+    openSettings();
+    return;
+  }
+  // Create a new session with the template's system prompt baked into the first message
+  await newChat();
+  inputText.value = '';
+  if (messageInputRef.value) {
+    messageInputRef.value.text = '';
+  }
+  // We set the system prompt via storage - the API layer reads it
+  const { setSystemPrompt } = await import('../../utils/storage');
+  await setSystemPrompt(template.systemPrompt);
+  // Give the user a visual hint
+  showToast(`Template: ${template.name}`, 1500);
 }
 
 // ============================================================
@@ -2096,26 +1597,20 @@ async function handleContentImageMessage(imageUrl: string, prompt: string): Prom
 // ============================================================
 
 onMounted(async () => {
-  // Load providers
   providers.value = await getAllProviders();
   const active = await getActiveProvider();
   activeProviderId.value = active?.id || null;
 
-  // Load theme
   currentThemeMode.value = await getThemeMode();
   applyTheme(currentThemeMode.value);
 
-  // Load language
   currentLanguage.value = await getLanguage();
 
-  // Load selection quote setting
   selectionQuoteEnabled.value = await getSelectionQuoteEnabled();
 
-  // Watch system theme
   systemThemeMediaQuery.value = window.matchMedia('(prefers-color-scheme: dark)');
   systemThemeMediaQuery.value.addEventListener('change', handleSystemThemeChange);
 
-  // Watch storage changes
   unwatchProviders.value = watchProviders((newProviders) => {
     providers.value = newProviders;
   });
@@ -2138,7 +1633,6 @@ onMounted(async () => {
     if (!enabled) hideSelectionQuotePopup();
   });
 
-  // Event listeners
   markdownActionClickHandler = (event: MouseEvent) => {
     void handleMarkdownActionClick(event);
   };
@@ -2153,43 +1647,37 @@ onMounted(async () => {
     chatAreaRef.value.addEventListener('scroll', checkUserScroll, { passive: true });
   }
 
-  // Listen for messages from content script (forwarded via background)
   contentMessageHandler = (message: any) => {
     handleContentMessage(message);
   };
   browser.runtime.onMessage.addListener(contentMessageHandler);
 
-  // Initialize MCP connections
   await connectEnabledMcpServers();
 
-  // Watch MCP server config changes and reconnect
   unwatchMcpServers.value = watchMcpServers(async () => {
     await connectEnabledMcpServers();
   });
 
-  // Initialize skills
   loadedSkills.value = await getAllSkills();
 
-  // Set script confirmation callback
   setScriptConfirmCallback(handleScriptConfirmation);
+
+  // Load templates
+  chatTemplates.value = await getAllTemplates();
 });
 
 onUnmounted(() => {
-  // Abort any in-progress generation
   chatAbortController.value?.abort();
 
-  // Signal streaming end to background
   browser.runtime.sendMessage({ type: 'STREAM_END' }).catch(() => {});
 
-  // Save any partial content
   if (currentSession.value && messages.value.length > 0) {
     saveCurrentSession().catch(() => {});
   }
 
   if (saveTimer) clearTimeout(saveTimer);
   if (toastTimer) clearTimeout(toastTimer);
-  if (streamRenderTimer) cancelAnimationFrame(streamRenderTimer);
-  streamContentDirty = false;
+  clearStreamRenderState();
   unwatchProviders.value?.();
   unwatchActiveProviderId.value?.();
   unwatchLanguage.value?.();
@@ -2227,12 +1715,18 @@ onUnmounted(() => {
       </div>
 
       <div class="header-center">
-        <button class="model-selector-btn" @click="showModelSelector = !showModelSelector; modelSearchQuery = ''" :aria-label="'Select model: ' + activeModelName" aria-haspopup="listbox">
-          <span class="model-name">{{ activeModelName }}</span>
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <polyline points="6 9 12 15 18 9"/>
-          </svg>
-        </button>
+        <ModelSelector
+          ref="modelSelectorRef"
+          :providers="providers"
+          :active-provider-id="activeProviderId"
+          :active-model-name="activeModelName"
+          :language="currentLanguage"
+          @select="selectProviderModel"
+        />
+        <!-- Context usage bar -->
+        <div v-if="messages.length > 0" class="context-bar" :title="`${contextTokenEstimate.toLocaleString()} / ${contextTokenMax.toLocaleString()} tokens`">
+          <div class="context-bar-fill" :style="{ width: contextUsagePercent + '%', background: contextBarColor }"></div>
+        </div>
       </div>
 
       <div class="header-right">
@@ -2270,46 +1764,6 @@ onUnmounted(() => {
           </svg>
         </button>
       </div>
-
-      <!-- Model selector dropdown -->
-      <div v-if="showModelSelector" class="model-selector-dropdown" @click.stop>
-        <div class="model-search-row">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="11" cy="11" r="8"/>
-            <line x1="21" y1="21" x2="16.65" y2="16.65"/>
-          </svg>
-          <input
-            v-model="modelSearchQuery"
-            type="text"
-            class="model-search-input"
-            placeholder="Search models..."
-            @click.stop
-          />
-        </div>
-        <div class="model-list-scroll">
-          <template v-for="group in groupedModelOptions" :key="group.providerId">
-            <div class="model-group-header">
-              <span class="model-group-name">{{ group.providerName }}</span>
-            </div>
-            <div
-              v-for="item in group.models"
-              :key="`${group.providerId}-${item.model}`"
-              class="model-option"
-              :class="{ active: activeProviderId === group.providerId && activeModelName === item.model }"
-              @click="selectProviderModel(group.providerId, item.model)"
-            >
-              <span class="model-option-name">{{ item.model }}</span>
-              <span class="model-option-badges">
-                <span v-if="item.isVision" class="model-vision-badge" title="Vision model">eye</span>
-                <span v-if="activeProviderId === group.providerId && activeModelName === item.model" class="model-check">&#10003;</span>
-              </span>
-            </div>
-          </template>
-        </div>
-        <div v-if="filteredModelOptions.length === 0" class="model-option-empty">
-          {{ allModelOptions.length === 0 ? i18n(currentLanguage, 'model.noModels') : 'No matching models' }}
-        </div>
-      </div>
     </header>
 
     <!-- Chat area -->
@@ -2334,205 +1788,51 @@ onUnmounted(() => {
               <polyline points="9 18 15 12 9 6"/>
             </svg>
           </button>
+          <!-- Template cards -->
+          <div v-if="activeProvider && chatTemplates.length > 0" class="template-cards">
+            <button
+              v-for="template in chatTemplates"
+              :key="template.id"
+              class="template-card"
+              @click="startTemplate(template)"
+            >
+              <span class="template-card-icon">
+                <svg v-if="template.icon === 'translate'" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 8l6 6"/><path d="M4 14l6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="M12 22l5-10 5 10"/><path d="M14.5 18h5"/></svg>
+                <svg v-else-if="template.icon === 'code'" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+                <svg v-else-if="template.icon === 'edit'" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              </span>
+              <span class="template-card-name">{{ template.name }}</span>
+            </button>
+          </div>
           <p v-if="!activeProvider" class="empty-state-hint">OpenAI, Claude, Gemini, DeepSeek & more</p>
         </div>
       </div>
 
       <!-- Messages -->
-      <div
+      <ChatMessage
         v-for="(message, index) in messages"
         :key="index"
-        class="message-wrapper"
-        :class="[`message-${message.role}`]"
-      >
-        <!-- Thinking/reasoning block (collapsible) -->
-        <div v-if="message.reasoning" class="reasoning-block">
-          <button class="reasoning-toggle" @click="toggleReasoning(index)">
-            <svg
-              width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-              :style="{ transform: reasoningExpanded[index] ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 200ms ease' }"
-            >
-              <polyline points="9 18 15 12 9 6"/>
-            </svg>
-            <span>{{ i18n(currentLanguage, 'chat.thinking') }}</span>
-          </button>
-          <div v-if="reasoningExpanded[index]" class="reasoning-content">
-            {{ message.reasoning }}
-          </div>
-        </div>
-
-        <!-- Message row with avatar -->
-        <div class="message-row">
-          <!-- Avatar -->
-          <div class="message-avatar" :class="message.role === 'user' ? 'avatar-user' : 'avatar-assistant'">
-            <template v-if="message.role === 'user'">U</template>
-            <template v-else>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M12 2L2 7l10 5 10-5-10-5z"/>
-                <path d="M2 17l10 5 10-5"/>
-                <path d="M2 12l10 5 10-5"/>
-              </svg>
-            </template>
-          </div>
-
-          <div class="message-body">
-            <!-- Message bubble -->
-            <div class="message-bubble" :class="[`bubble-${message.role}`, { 'bubble-error': message.content?.startsWith('__ERROR__') }]">
-              <!-- Images -->
-              <div v-if="message.images && message.images.length" class="message-images">
-                <img
-                  v-for="image in message.images"
-                  :key="image.id"
-                  :src="image.dataUrl"
-                  :alt="image.name"
-                  class="message-image"
-                  @click="openLightbox(image.dataUrl)"
-                />
-              </div>
-
-              <!-- File attachments -->
-              <div v-if="message.fileAttachments && message.fileAttachments.length" class="message-files">
-                <div v-for="file in message.fileAttachments" :key="file.id" class="message-file-chip">
-                  <span class="message-file-icon">{{ getFileIcon(file.format) }}</span>
-                  <span class="message-file-name">{{ file.name }}</span>
-                </div>
-              </div>
-
-              <!-- Quote -->
-              <div v-if="message.quote" class="message-quote">
-                {{ message.quote }}
-              </div>
-
-              <!-- Edit mode for user messages -->
-              <template v-if="editingMessageIndex === index">
-                <textarea
-                  class="edit-textarea"
-                  v-model="editingMessageText"
-                  rows="3"
-                  @keydown.escape="cancelEditMessage"
-                ></textarea>
-                <div class="edit-actions">
-                  <button class="edit-action-btn cancel" @click="cancelEditMessage">{{ i18n(currentLanguage, 'chat.cancel') }}</button>
-                  <button class="edit-action-btn save" @click="saveEditMessage">{{ i18n(currentLanguage, 'chat.saveResend') }}</button>
-                </div>
-              </template>
-
-              <!-- Normal content -->
-              <template v-else>
-                <!-- Error message with structured display -->
-                <template v-if="message.content?.startsWith('__ERROR__:')">
-                  <div class="error-content">
-                    <template v-if="parseErrorContent(message.content)">
-                      <div class="error-header">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--color-error)" stroke-width="2">
-                          <circle cx="12" cy="12" r="10"/>
-                          <line x1="15" y1="9" x2="9" y2="15"/>
-                          <line x1="9" y1="9" x2="15" y2="15"/>
-                        </svg>
-                        <span class="error-type">{{ getErrorTitle(parseErrorContent(message.content)!.code) }}</span>
-                      </div>
-                      <p class="error-message">{{ parseErrorContent(message.content)!.message }}</p>
-                      <div class="error-actions">
-                        <button class="error-action-btn retry" @click="regenerateLastResponse">
-                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <polyline points="23 4 23 10 17 10"/>
-                            <path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/>
-                          </svg>
-                          Retry
-                        </button>
-                        <button class="error-action-btn copy-error" @click="copyErrorDetails(parseErrorContent(message.content)!.rawError)">
-                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-                            <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
-                          </svg>
-                          Copy error
-                        </button>
-                      </div>
-                    </template>
-                    <template v-else>
-                      {{ message.content.replace('__ERROR__: ', '') }}
-                      <button class="retry-btn" @click="regenerateLastResponse">Retry</button>
-                    </template>
-                  </div>
-                </template>
-
-                <!-- Assistant markdown content -->
-                <template v-else-if="message.role === 'assistant'">
-                  <div
-                    class="message-content markdown-content"
-                    v-html="renderMarkdown(message.content || '')"
-                  ></div>
-                  <!-- Streaming cursor -->
-                  <span v-if="isLoading && index === messages.length - 1 && message.content" class="streaming-cursor"></span>
-                </template>
-
-                <!-- User message content -->
-                <template v-else>
-                  <div class="message-content">
-                    {{ getUserMessageDisplayContent(message) }}
-                  </div>
-                </template>
-
-                <!-- Typing indicator -->
-                <div v-if="isLoading && index === messages.length - 1 && message.role === 'assistant' && !message.content" class="typing-indicator">
-                  <span></span><span></span><span></span>
-                </div>
-              </template>
-            </div>
-
-            <!-- Message actions row -->
-            <div class="message-actions-row" v-if="editingMessageIndex !== index">
-              <!-- Timestamp -->
-              <span class="message-time">{{ formatTime(message.timestamp) }}</span>
-
-              <!-- Assistant actions -->
-              <template v-if="message.role === 'assistant' && message.content && !message.content.startsWith('__ERROR__')">
-                <button
-                  class="msg-action-btn"
-                  :class="{ copied: copiedMessageIndex === index }"
-                  @click="copyMessage(index)"
-                  :title="i18n(currentLanguage, 'chat.copy')"
-                >
-                  <svg v-if="copiedMessageIndex !== index" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-                    <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
-                  </svg>
-                  <svg v-else width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <polyline points="20 6 9 17 4 12"/>
-                  </svg>
-                </button>
-                <button
-                  v-if="index === messages.length - 1"
-                  class="msg-action-btn"
-                  @click="regenerateLastResponse"
-                  title="Regenerate"
-                >
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <polyline points="23 4 23 10 17 10"/>
-                    <path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/>
-                  </svg>
-                </button>
-              </template>
-
-              <!-- User message actions -->
-              <template v-if="message.role === 'user'">
-                <button class="msg-action-btn" @click="startEditMessage(index)" :title="i18n(currentLanguage, 'chat.editMessage')">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
-                    <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
-                  </svg>
-                </button>
-                <button class="msg-action-btn msg-action-danger" @click="deleteMessagePair(index)" title="Delete">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <polyline points="3 6 5 6 21 6"/>
-                    <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
-                  </svg>
-                </button>
-              </template>
-            </div>
-          </div>
-        </div>
-      </div>
+        :message="message"
+        :index="index"
+        :is-last="index === messages.length - 1"
+        :language="currentLanguage"
+        :is-loading="isLoading"
+        :is-editing="editingMessageIndex === index"
+        :editing-text="editingMessageText"
+        :copied="copiedMessageIndex === index"
+        :reasoning-expanded="!!reasoningExpanded[index]"
+        @edit="startEditMessage"
+        @cancel-edit="cancelEditMessage"
+        @save-edit="saveEditMessage"
+        @update:editing-text="editingMessageText = $event"
+        @copy="copyMessage"
+        @delete="deleteMessagePair"
+        @regenerate="regenerateLastResponse"
+        @toggle-reasoning="(i) => reasoningExpanded[i] = !reasoningExpanded[i]"
+        @open-lightbox="openLightbox"
+        @copy-error="(rawError) => { writeTextToClipboard(rawError).then((ok) => { if (ok) showToast('Error details copied'); }); }"
+      />
 
       <!-- Scroll to bottom button -->
       <button
@@ -2555,191 +1855,64 @@ onUnmounted(() => {
       <button v-if="browserAutomationActive" class="automation-status-stop" @click="endBrowserAutomation">{{ i18n(currentLanguage, 'browser.end') }}</button>
     </div>
 
-    <!-- Input area -->
-    <div class="input-area" :class="{ 'drag-active': isImageDragActive }">
-      <!-- Pending attachments -->
-      <div v-if="hasPendingImages || hasPendingFiles" class="pending-attachments">
-        <!-- Pending images -->
-        <div v-for="image in pendingImages" :key="image.id" class="pending-image-chip">
-          <img :src="image.dataUrl" :alt="image.name" class="pending-image-thumb" />
-          <button class="pending-image-remove" @click="removePendingImage(image.id)">&times;</button>
-        </div>
-        <!-- Pending file attachments -->
-        <div v-for="file in pendingFiles" :key="file.id" class="pending-file-chip">
-          <span class="pending-file-icon">{{ getFileIcon(file.format) }}</span>
-          <span class="pending-file-name">{{ file.name }}</span>
-          <button class="pending-file-remove" @click="removePendingFile(file.id)">&times;</button>
-        </div>
-      </div>
-
-      <!-- Share page content toggle -->
-      <div class="share-page-row">
-        <button
-          class="share-page-btn"
-          :class="{ active: sharePageContentEnabled }"
-          @click="toggleSharePageContent"
-          :disabled="sharePageContentLoading"
-          :title="i18n(currentLanguage, 'sharePage.clickToShare')"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M4 19.5A2.5 2.5 0 016.5 17H20"/>
-            <path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/>
-          </svg>
-          <span>{{ sharePageContentEnabled ? i18n(currentLanguage, 'sharePage.shared', { title: sharePageContentTitle }) : i18n(currentLanguage, 'sharePage.share') }}</span>
-        </button>
-      </div>
-
-      <!-- Input row -->
-      <div class="input-row">
-        <input
-          type="file"
-          ref="fileInputRef"
-          accept="image/*,.pdf,.docx,.csv,.txt,.md"
-          multiple
-          style="display: none"
-          @change="handleFileInputChange"
-        />
-
-        <button
-          class="input-action-btn"
-          @click="openFilePicker"
-          :title="i18n(currentLanguage, 'input.attachFile')"
-        >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/>
-          </svg>
-        </button>
-
-        <textarea
-          ref="textareaRef"
-          v-model="inputText"
-          class="input-textarea"
-          :placeholder="activeProvider ? i18n(currentLanguage, 'input.placeholder') : i18n(currentLanguage, 'input.placeholderNoProvider')"
-          rows="1"
-          @keydown="handleKeydown"
-          @compositionstart="handleCompositionStart"
-          @compositionend="handleCompositionEnd"
-          @paste="handleInputPaste"
-          @dragenter="handleInputBoxDragEnter"
-          @dragover="handleInputBoxDragOver"
-          @dragleave="handleInputBoxDragLeave"
-          @drop="handleInputBoxDrop"
-        ></textarea>
-
-        <button
-          v-if="isLoading"
-          class="send-btn stop-btn"
-          @click="terminateCurrentGeneration"
-          :title="i18n(currentLanguage, 'chat.stopGenerating')"
-          :aria-label="i18n(currentLanguage, 'chat.stopGenerating')"
-        >
-          <div class="stop-btn-pulse"></div>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-            <rect x="6" y="6" width="12" height="12" rx="2"/>
-          </svg>
-        </button>
-        <button
-          v-else
-          class="send-btn"
-          :class="{ active: canSendMessage }"
-          :disabled="!canSendMessage"
-          @click="sendMessage"
-          :title="i18n(currentLanguage, 'chat.send')"
-        >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <line x1="22" y1="2" x2="11" y2="13"/>
-            <polygon points="22 2 15 22 11 13 2 9 22 2"/>
-          </svg>
-        </button>
-      </div>
+    <!-- Context trimming warning -->
+    <div v-if="contextUsagePercent >= 90" class="context-warning-bar">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+        <line x1="12" y1="9" x2="12" y2="13"/>
+        <line x1="12" y1="17" x2="12.01" y2="17"/>
+      </svg>
+      <span>Context near limit. Older messages may be trimmed.</span>
     </div>
+
+    <!-- Input area -->
+    <input
+      type="file"
+      ref="fileInputRef"
+      accept="image/*,.pdf,.docx,.csv,.txt,.md"
+      multiple
+      style="display: none"
+      @change="handleFileInputChange"
+    />
+    <MessageInput
+      ref="messageInputRef"
+      :language="currentLanguage"
+      :supports-vision="activeModelSupportsVision"
+      :is-loading="isLoading"
+      :has-active-provider="!!activeProvider"
+      :pending-images="pendingImages"
+      :pending-files="pendingFiles"
+      :share-page-enabled="sharePageContentEnabled"
+      :share-page-title="sharePageContentTitle"
+      :share-page-loading="sharePageContentLoading"
+      @send="sendMessage"
+      @stop="terminateCurrentGeneration"
+      @update:text="inputText = $event"
+      @remove-image="removePendingImage"
+      @remove-file="removePendingFile"
+      @toggle-share-page="toggleSharePageContent"
+      @open-file-picker="openFilePicker"
+      @paste="handleInputPaste"
+      @drop="handleInputDrop"
+    />
 
     <!-- History panel -->
     <div v-if="showHistory" class="history-overlay" @click="showHistory = false">
-      <div class="history-panel" @click.stop>
-        <div class="history-header">
-          <h3>{{ i18n(currentLanguage, 'history.title') }}</h3>
-          <button class="header-btn" @click="showHistory = false">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <line x1="18" y1="6" x2="6" y2="18"/>
-              <line x1="6" y1="6" x2="18" y2="18"/>
-            </svg>
-          </button>
-        </div>
-        <div class="history-search-row">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="11" cy="11" r="8"/>
-            <line x1="21" y1="21" x2="16.65" y2="16.65"/>
-          </svg>
-          <input
-            v-model="historySearchQuery"
-            type="text"
-            class="history-search-input"
-            :placeholder="i18n(currentLanguage, 'history.search')"
-          />
-        </div>
-        <div class="history-list" ref="sessionListRef" @scroll="handleSessionListScroll">
-          <template v-for="group in groupedSessions" :key="group.label">
-            <div class="history-date-group">{{ group.label }}</div>
-            <button
-              v-for="session in group.sessions"
-              :key="session.id"
-              class="history-item"
-              :class="{ active: currentSession?.id === session.id }"
-              @click="loadSession(session)"
-            >
-              <div class="history-item-info">
-                <template v-if="renamingSessionId === session.id">
-                  <input
-                    class="rename-input"
-                    v-model="renameInput"
-                    @keydown.enter="finishRenameSession"
-                    @keydown.escape="cancelRenameSession"
-                    @blur="finishRenameSession"
-                    @click.stop
-                  />
-                </template>
-                <template v-else>
-                  <span class="history-item-title">{{ session.title }}</span>
-                </template>
-                <span class="history-item-date">{{ formatSessionDate(session.updatedAt) }}</span>
-              </div>
-              <div class="history-item-actions">
-                <button class="history-item-action" @click="(e) => startRenameSession(session, e)" title="Rename">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
-                    <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
-                  </svg>
-                </button>
-                <button class="history-item-delete" @click="(e) => removeSession(session.id, e)">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <polyline points="3 6 5 6 21 6"/>
-                    <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
-                  </svg>
-                </button>
-              </div>
-            </button>
-          </template>
-          <div v-if="sessions.length === 0" class="history-empty">
-            {{ i18n(currentLanguage, 'history.noChats') }}
-          </div>
-          <div v-if="sessionsLoading" class="history-loading">{{ i18n(currentLanguage, 'history.loading') }}</div>
-        </div>
-        <button class="history-new-btn" @click="newChat">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <line x1="12" y1="5" x2="12" y2="19"/>
-            <line x1="5" y1="12" x2="19" y2="12"/>
-          </svg>
-          {{ i18n(currentLanguage, 'history.newChat') }}
-        </button>
-        <div class="history-actions-row">
-          <button class="history-action-btn" @click="handleExportCurrentSession" :disabled="!currentSession">{{ i18n(currentLanguage, 'history.export') }}</button>
-          <label class="history-action-btn">
-            {{ i18n(currentLanguage, 'history.import') }}
-            <input type="file" accept=".json" style="display: none" @change="handleImportSession" />
-          </label>
-        </div>
-      </div>
+      <SessionHistory
+        :sessions="sessions"
+        :current-session-id="currentSession?.id || null"
+        :language="currentLanguage"
+        :has-more="sessionsHasMore"
+        :loading="sessionsLoading"
+        @load="loadSession"
+        @delete="removeSession"
+        @load-more="loadMoreSessions"
+        @rename="renameSession"
+        @export="handleExportCurrentSession"
+        @import="handleImportSession"
+        @new-chat="newChat"
+        @close="showHistory = false"
+      />
     </div>
 
     <!-- Selection quote popup -->
@@ -2752,30 +1925,14 @@ onUnmounted(() => {
     </div>
 
     <!-- Fullscreen code modal -->
-    <div v-if="fullscreenCodeBlock" class="code-fullscreen-overlay" @click="closeFullscreenCodeBlock">
-      <div class="code-fullscreen-container" @click.stop>
-        <div class="code-fullscreen-header">
-          <span>{{ fullscreenCodeBlock.language || i18n(currentLanguage, 'chat.code') }}</span>
-          <div class="code-fullscreen-actions">
-            <button class="header-btn" @click="copyFullscreenCodeBlock" :title="i18n(currentLanguage, 'chat.copy')">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-                <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
-              </svg>
-            </button>
-            <button class="header-btn" @click="closeFullscreenCodeBlock" :title="i18n(currentLanguage, 'code.close')">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <line x1="18" y1="6" x2="6" y2="18"/>
-                <line x1="6" y1="6" x2="18" y2="18"/>
-              </svg>
-            </button>
-          </div>
-        </div>
-        <div class="code-fullscreen-body">
-          <pre>{{ fullscreenCodeBlock.code }}</pre>
-        </div>
-      </div>
-    </div>
+    <CodeFullscreen
+      v-if="fullscreenCodeBlock"
+      :code="fullscreenCodeBlock.code"
+      :language="fullscreenCodeBlock.language"
+      :lang="currentLanguage"
+      @close="closeFullscreenCodeBlock"
+      @copy="copyFullscreenCodeBlock"
+    />
 
     <!-- Confirmation dialog -->
     <div v-if="confirmationDialog?.visible" class="confirmation-overlay" @click="confirmationDialog.onCancel">
@@ -2823,9 +1980,11 @@ onUnmounted(() => {
     </div>
 
     <!-- Toast notification -->
-    <div v-if="toastMessage" class="toast-notification">
-      {{ toastMessage }}
-    </div>
+    <Transition name="toast">
+      <div v-if="toastMessage" class="toast-notification">
+        {{ toastMessage }}
+      </div>
+    </Transition>
   </div>
 </template>
 
@@ -2851,6 +2010,7 @@ onUnmounted(() => {
   top: 0;
   z-index: 10;
   min-height: 48px;
+  transition: background 500ms ease, border-color 500ms ease;
 }
 
 .header-left,
@@ -2863,7 +2023,9 @@ onUnmounted(() => {
 .header-center {
   flex: 1;
   display: flex;
-  justify-content: center;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
 }
 
 .header-btn {
@@ -2883,6 +2045,7 @@ onUnmounted(() => {
 .header-btn:hover {
   background: var(--color-bg-secondary);
   color: var(--color-text-primary);
+  transform: scale(1.05);
 }
 
 .header-btn:focus-visible {
@@ -2890,144 +2053,20 @@ onUnmounted(() => {
   outline-offset: 2px;
 }
 
-.model-selector-btn {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-  padding: var(--spacing-xs) var(--spacing-sm);
-  border: none;
-  background: transparent;
-  color: var(--color-text-primary);
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  cursor: pointer;
-  border-radius: var(--radius-sm);
-  transition: all var(--transition-fast);
-  max-width: 200px;
-}
-
-.model-selector-btn:hover {
-  background: var(--color-bg-secondary);
-}
-
-.model-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.model-selector-dropdown {
-  position: absolute;
-  top: 100%;
-  left: 50%;
-  transform: translateX(-50%);
-  min-width: 300px;
-  max-height: 380px;
-  background: var(--color-bg-primary);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-lg);
-  z-index: 100;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.model-search-row {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-  padding: var(--spacing-xs) var(--spacing-md);
-  border-bottom: 1px solid var(--color-border);
-  color: var(--color-text-secondary);
-  flex-shrink: 0;
-}
-
-.model-search-input {
-  flex: 1;
-  border: none;
-  background: transparent;
-  color: var(--color-text-primary);
-  font-size: var(--font-size-sm);
-  font-family: var(--font-body);
-  outline: none;
-  padding: var(--spacing-xs) 0;
-}
-
-.model-search-input::placeholder {
-  color: var(--color-text-secondary);
-}
-
-.model-list-scroll {
-  overflow-y: auto;
-  max-height: 340px;
-}
-
-.model-group-header {
-  padding: var(--spacing-xs) var(--spacing-md);
-  background: var(--color-bg-secondary);
-  position: sticky;
-  top: 0;
-  z-index: 1;
-}
-
-.model-group-name {
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  color: var(--color-text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.model-option {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: var(--spacing-xs) var(--spacing-md);
-  cursor: pointer;
-  transition: background var(--transition-fast);
-}
-
-.model-option:hover {
-  background: var(--color-bg-secondary);
-}
-
-.model-option.active {
-  background: rgba(0, 122, 255, 0.08);
-}
-
-.model-option-name {
-  font-size: var(--font-size-sm);
-  color: var(--color-text-primary);
-  font-weight: 400;
-}
-
-.model-option-badges {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-}
-
-.model-vision-badge {
-  font-size: 9px;
-  padding: 1px 4px;
-  border-radius: var(--radius-full);
+/* Context bar */
+.context-bar {
+  width: 120px;
+  height: 3px;
   background: var(--color-bg-tertiary);
-  color: var(--color-text-secondary);
-  font-weight: 600;
+  border-radius: var(--radius-full);
+  overflow: hidden;
+  cursor: default;
 }
 
-.model-check {
-  color: var(--color-accent);
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.model-option-empty {
-  padding: var(--spacing-md);
-  text-align: center;
-  font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
+.context-bar-fill {
+  height: 100%;
+  border-radius: var(--radius-full);
+  transition: width 300ms ease, background 300ms ease;
 }
 
 /* Chat area */
@@ -3069,6 +2108,12 @@ onUnmounted(() => {
   flex-direction: column;
   align-items: center;
   gap: var(--spacing-sm);
+  animation: empty-fade-in 400ms ease;
+}
+
+@keyframes empty-fade-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .empty-state-logo {
@@ -3116,431 +2161,46 @@ onUnmounted(() => {
   opacity: 0.7;
 }
 
-/* Messages */
-.message-wrapper {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-xs);
-  position: relative;
-  animation: message-fade-in 200ms ease both;
-}
-
-@keyframes message-fade-in {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.message-user {
-  align-items: flex-end;
-}
-
-.message-assistant {
-  align-items: flex-start;
-}
-
-/* Message row with avatar */
-.message-row {
-  display: flex;
-  gap: var(--spacing-sm);
-  max-width: 95%;
-}
-
-.message-user .message-row {
-  flex-direction: row-reverse;
-}
-
-.message-body {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-  flex: 1;
-}
-
-/* Avatar */
-.message-avatar {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 11px;
-  font-weight: 700;
-  flex-shrink: 0;
-  margin-top: 2px;
-}
-
-.avatar-user {
-  background: var(--color-accent);
-  color: var(--color-text-on-accent);
-}
-
-.avatar-assistant {
-  background: var(--color-bg-tertiary);
-  color: var(--color-text-secondary);
-}
-
-.message-user .message-avatar {
-  margin-left: auto;
-}
-
-.message-assistant .message-avatar {
-  margin-right: auto;
-}
-
-.message-bubble {
-  max-width: 100%;
-  padding: var(--spacing-sm) var(--spacing-md);
-  border-radius: var(--radius-lg);
-  font-size: var(--font-size-md);
-  line-height: var(--line-height-normal);
-  word-wrap: break-word;
-  overflow-wrap: break-word;
-}
-
-.bubble-user {
-  background: var(--color-bg-user-bubble);
-  color: var(--color-text-user-bubble);
-  border-bottom-right-radius: var(--radius-xs);
-}
-
-.bubble-assistant {
-  background: var(--color-bg-assistant-bubble);
-  color: var(--color-text-primary);
-  border-bottom-left-radius: var(--radius-xs);
-}
-
-.bubble-error {
-  background: rgba(255, 59, 48, 0.08);
-  border: 1px solid rgba(255, 59, 48, 0.2);
-}
-
-/* Reasoning block */
-.reasoning-block {
-  max-width: 85%;
-  margin-bottom: var(--spacing-xs);
-}
-
-.reasoning-toggle {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-  padding: var(--spacing-xs) var(--spacing-sm);
-  border: none;
-  background: transparent;
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
-  cursor: pointer;
-  border-radius: var(--radius-sm);
-  transition: all var(--transition-fast);
-}
-
-.reasoning-toggle:hover {
-  background: var(--color-bg-secondary);
-}
-
-.reasoning-content {
-  margin-top: var(--spacing-xs);
-  padding: var(--spacing-sm);
-  background: var(--color-bg-secondary);
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
-  line-height: var(--line-height-normal);
-  white-space: pre-wrap;
-}
-
-/* Message images */
-.message-images {
+/* Template cards */
+.template-cards {
   display: flex;
   flex-wrap: wrap;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-lg);
+  justify-content: center;
+  max-width: 380px;
+}
+
+.template-card {
+  display: flex;
+  align-items: center;
   gap: var(--spacing-xs);
-  margin-bottom: var(--spacing-sm);
-}
-
-.message-image {
-  max-width: 200px;
-  max-height: 200px;
-  border-radius: var(--radius-sm);
-  object-fit: cover;
+  padding: var(--spacing-xs) var(--spacing-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
   cursor: pointer;
-  transition: transform 150ms ease, box-shadow 150ms ease;
+  border-radius: var(--radius-full);
+  transition: all var(--transition-fast);
+  font-family: var(--font-body);
 }
 
-.message-image:hover {
+.template-card:hover {
+  border-color: var(--color-accent);
+  background: rgba(0, 122, 255, 0.08);
   transform: scale(1.02);
-  box-shadow: var(--shadow-md);
 }
 
-/* Message file attachments */
-.message-files {
+.template-card-icon {
   display: flex;
-  flex-wrap: wrap;
-  gap: var(--spacing-xs);
-  margin-bottom: var(--spacing-sm);
-}
-
-.message-file-chip {
-  display: inline-flex;
   align-items: center;
-  gap: var(--spacing-xs);
-  padding: var(--spacing-xs) var(--spacing-sm);
-  background: rgba(255, 255, 255, 0.15);
-  border-radius: var(--radius-sm);
-  font-size: var(--font-size-xs);
+  color: var(--color-accent);
 }
 
-.bubble-assistant .message-file-chip {
-  background: var(--color-bg-secondary);
-}
-
-.message-file-icon {
-  font-size: 14px;
-  line-height: 1;
-}
-
-.message-file-name {
-  max-width: 120px;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.template-card-name {
   white-space: nowrap;
-}
-
-/* Quote */
-.message-quote {
-  padding: var(--spacing-xs) var(--spacing-sm);
-  margin-bottom: var(--spacing-sm);
-  border-left: 3px solid var(--color-border);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-sm);
-  font-style: italic;
-}
-
-.bubble-user .message-quote {
-  border-left-color: rgba(255, 255, 255, 0.3);
-  color: rgba(255, 255, 255, 0.8);
-}
-
-/* Message actions row */
-.message-actions-row {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-  padding: 0 var(--spacing-xs);
-  opacity: 0;
-  transition: opacity var(--transition-fast);
-}
-
-.message-wrapper:hover .message-actions-row {
-  opacity: 1;
-}
-
-.message-time {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-secondary);
-  padding: 0;
-}
-
-.msg-action-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border: none;
-  background: transparent;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  border-radius: var(--radius-sm);
-  transition: all var(--transition-fast);
-  padding: 0;
-}
-
-.msg-action-btn:hover {
-  background: var(--color-bg-secondary);
-  color: var(--color-text-primary);
-}
-
-.msg-action-btn.copied {
-  color: var(--color-success);
-}
-
-.msg-action-danger:hover {
-  color: var(--color-error);
-}
-
-/* Edit message */
-.edit-textarea {
-  width: 100%;
-  padding: var(--spacing-sm);
-  border: 1px solid var(--color-accent);
-  border-radius: var(--radius-sm);
-  background: var(--color-bg-primary);
-  color: var(--color-text-primary);
-  font-family: var(--font-body);
-  font-size: var(--font-size-sm);
-  resize: vertical;
-  outline: none;
-  min-height: 60px;
-  line-height: var(--line-height-normal);
-}
-
-.edit-actions {
-  display: flex;
-  gap: var(--spacing-xs);
-  margin-top: var(--spacing-xs);
-  justify-content: flex-end;
-}
-
-.edit-action-btn {
-  padding: var(--spacing-xs) var(--spacing-sm);
-  border: none;
-  border-radius: var(--radius-sm);
-  font-size: var(--font-size-xs);
-  font-weight: 500;
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-
-.edit-action-btn.cancel {
-  background: transparent;
-  color: var(--color-text-secondary);
-}
-
-.edit-action-btn.cancel:hover {
-  background: var(--color-bg-secondary);
-}
-
-.edit-action-btn.save {
-  background: var(--color-accent);
-  color: var(--color-text-on-accent);
-}
-
-.edit-action-btn.save:hover {
-  background: var(--color-accent-hover);
-}
-
-/* Error content with retry */
-.error-content {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-sm);
-  color: var(--color-error);
-  font-size: var(--font-size-sm);
-}
-
-.error-header {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-  font-weight: 600;
-}
-
-.error-type {
-  text-transform: uppercase;
-  font-size: var(--font-size-xs);
-  letter-spacing: 0.5px;
-}
-
-.error-message {
-  margin: 0;
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-sm);
-  line-height: var(--line-height-normal);
-}
-
-.error-actions {
-  display: flex;
-  gap: var(--spacing-xs);
-  margin-top: var(--spacing-xs);
-}
-
-.error-action-btn {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: var(--spacing-xs) var(--spacing-sm);
-  border: 1px solid var(--color-error);
-  background: transparent;
-  color: var(--color-error);
-  font-size: var(--font-size-xs);
-  font-weight: 500;
-  cursor: pointer;
-  border-radius: var(--radius-sm);
-  transition: all var(--transition-fast);
-  font-family: var(--font-body);
-}
-
-.error-action-btn:hover {
-  background: var(--color-error);
-  color: white;
-}
-
-.error-action-btn.copy-error {
-  border-color: var(--color-border);
-  color: var(--color-text-secondary);
-}
-
-.error-action-btn.copy-error:hover {
-  background: var(--color-bg-secondary);
-  border-color: var(--color-border);
-  color: var(--color-text-primary);
-}
-
-.retry-btn {
-  align-self: flex-start;
-  padding: var(--spacing-xs) var(--spacing-sm);
-  border: 1px solid var(--color-error);
-  background: transparent;
-  color: var(--color-error);
-  font-size: var(--font-size-xs);
-  font-weight: 500;
-  cursor: pointer;
-  border-radius: var(--radius-sm);
-  transition: all var(--transition-fast);
-}
-
-.retry-btn:hover {
-  background: var(--color-error);
-  color: white;
-}
-
-/* Streaming cursor */
-.streaming-cursor {
-  display: inline-block;
-  width: 2px;
-  height: 1em;
-  background: var(--color-accent);
-  margin-left: 2px;
-  vertical-align: text-bottom;
-  animation: cursor-blink 1s step-end infinite;
-}
-
-@keyframes cursor-blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0; }
-}
-
-/* Stop button pulse */
-.stop-btn-pulse {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  background: var(--color-error);
-  animation: stop-pulse 1.5s ease-in-out infinite;
-  z-index: -1;
-}
-
-@keyframes stop-pulse {
-  0%, 100% { transform: scale(1); opacity: 0.5; }
-  50% { transform: scale(1.3); opacity: 0; }
 }
 
 /* Scroll to bottom button */
@@ -3570,220 +2230,7 @@ onUnmounted(() => {
   background: var(--color-bg-secondary);
   color: var(--color-text-primary);
   box-shadow: var(--shadow-lg);
-}
-
-/* Typing indicator */
-.typing-indicator {
-  display: flex;
-  gap: 4px;
-  padding: var(--spacing-xs) 0;
-}
-
-.typing-indicator span {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--color-text-secondary);
-  animation: typing-bounce 1.4s infinite ease-in-out;
-}
-
-.typing-indicator span:nth-child(1) { animation-delay: 0s; }
-.typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
-.typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
-
-@keyframes typing-bounce {
-  0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
-  40% { transform: scale(1); opacity: 1; }
-}
-
-/* Input area */
-.input-area {
-  padding: var(--spacing-sm) var(--spacing-md);
-  border-top: 1px solid var(--color-border);
-  background: var(--color-bg-primary);
-}
-
-.input-area.drag-active {
-  background: var(--color-bg-secondary);
-  border-color: var(--color-accent);
-}
-
-.pending-attachments {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--spacing-xs);
-  margin-bottom: var(--spacing-sm);
-}
-
-.pending-image-chip {
-  position: relative;
-  width: 48px;
-  height: 48px;
-  border-radius: var(--radius-sm);
-  overflow: hidden;
-  border: 1px solid var(--color-border);
-}
-
-.pending-image-thumb {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.pending-image-remove {
-  position: absolute;
-  top: -2px;
-  right: -2px;
-  width: 18px;
-  height: 18px;
-  border: none;
-  background: var(--color-error);
-  color: white;
-  border-radius: 50%;
-  font-size: 12px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  line-height: 1;
-}
-
-.pending-file-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-  padding: var(--spacing-xs) var(--spacing-sm);
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  font-size: var(--font-size-xs);
-  max-width: 180px;
-}
-
-.pending-file-icon {
-  font-size: 14px;
-  line-height: 1;
-  flex-shrink: 0;
-}
-
-.pending-file-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--color-text-primary);
-}
-
-.pending-file-remove {
-  width: 16px;
-  height: 16px;
-  border: none;
-  background: var(--color-error);
-  color: white;
-  border-radius: 50%;
-  font-size: 10px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  line-height: 1;
-  flex-shrink: 0;
-}
-
-.input-row {
-  display: flex;
-  align-items: flex-end;
-  gap: var(--spacing-sm);
-}
-
-.input-action-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  border: none;
-  background: transparent;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  border-radius: var(--radius-sm);
-  transition: all var(--transition-fast);
-  flex-shrink: 0;
-}
-
-.input-action-btn:hover {
-  background: var(--color-bg-secondary);
-  color: var(--color-text-primary);
-}
-
-.input-action-btn:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 2px;
-}
-
-.input-textarea {
-  flex: 1;
-  padding: var(--spacing-sm) var(--spacing-md);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-xl);
-  background: var(--color-bg-secondary);
-  color: var(--color-text-primary);
-  font-family: var(--font-body);
-  font-size: var(--font-size-md);
-  resize: none;
-  outline: none;
-  min-height: 36px;
-  max-height: 156px;
-  line-height: 22px;
-  transition: border-color var(--transition-fast);
-}
-
-.input-textarea:focus {
-  border-color: var(--color-accent);
-}
-
-.input-textarea::placeholder {
-  color: var(--color-text-secondary);
-}
-
-.send-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  border: none;
-  background: var(--color-bg-tertiary);
-  color: var(--color-text-secondary);
-  cursor: default;
-  border-radius: 50%;
-  transition: all var(--transition-normal);
-  flex-shrink: 0;
-  position: relative;
-}
-
-.send-btn.active {
-  background: var(--color-accent);
-  color: var(--color-text-on-accent);
-  cursor: pointer;
-}
-
-.send-btn.active:hover {
-  background: var(--color-accent-hover);
-}
-
-.send-btn:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 2px;
-}
-
-.stop-btn {
-  background: var(--color-error);
-  color: white;
-  cursor: pointer;
-}
-
-.stop-btn:hover {
-  opacity: 0.9;
+  transform: translateX(-50%) scale(1.05);
 }
 
 /* History overlay */
@@ -3798,261 +2245,12 @@ onUnmounted(() => {
   z-index: 50;
   display: flex;
   justify-content: flex-start;
+  animation: overlay-fade 200ms ease;
 }
 
-.history-panel {
-  width: 300px;
-  max-width: 85%;
-  height: 100%;
-  background: var(--color-bg-primary);
-  box-shadow: var(--shadow-lg);
-  display: flex;
-  flex-direction: column;
-}
-
-.history-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: var(--spacing-sm) var(--spacing-md);
-  border-bottom: 1px solid var(--color-border);
-}
-
-.history-header h3 {
-  font-size: var(--font-size-md);
-  font-weight: 600;
-}
-
-.history-list {
-  flex: 1;
-  overflow-y: auto;
-  padding: var(--spacing-xs);
-}
-
-.history-date-group {
-  padding: var(--spacing-xs) var(--spacing-md);
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  color: var(--color-text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  position: sticky;
-  top: 0;
-  background: var(--color-bg-primary);
-  z-index: 1;
-  margin-top: var(--spacing-xs);
-}
-
-.history-date-group:first-child {
-  margin-top: 0;
-}
-
-.history-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  padding: var(--spacing-sm) var(--spacing-md);
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  border-radius: var(--radius-sm);
-  transition: background var(--transition-fast);
-  text-align: left;
-}
-
-.history-item:hover {
-  background: var(--color-bg-secondary);
-}
-
-.history-item.active {
-  background: var(--color-bg-secondary);
-}
-
-.history-item-info {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-  flex: 1;
-}
-
-.history-item-title {
-  font-size: var(--font-size-sm);
-  color: var(--color-text-primary);
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.history-item-date {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-secondary);
-}
-
-.rename-input {
-  width: 100%;
-  padding: 2px 6px;
-  border: 1px solid var(--color-accent);
-  border-radius: var(--radius-sm);
-  background: var(--color-bg-primary);
-  color: var(--color-text-primary);
-  font-size: var(--font-size-sm);
-  font-family: var(--font-body);
-  outline: none;
-}
-
-.history-item-actions {
-  display: flex;
-  gap: 2px;
-  opacity: 0;
-  transition: opacity var(--transition-fast);
-  flex-shrink: 0;
-}
-
-.history-item:hover .history-item-actions {
-  opacity: 1;
-}
-
-.history-item-action {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 28px;
-  border: none;
-  background: transparent;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  border-radius: var(--radius-sm);
-  transition: all var(--transition-fast);
-  padding: 0;
-}
-
-.history-item-action:hover {
-  background: var(--color-bg-tertiary);
-  color: var(--color-text-primary);
-}
-
-.history-item-delete {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: none;
-  background: transparent;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  border-radius: var(--radius-sm);
-  transition: all var(--transition-fast);
-  flex-shrink: 0;
-  padding: 0;
-}
-
-.history-item:hover .history-item-delete {
-  opacity: 1;
-}
-
-.history-item-delete:hover {
-  background: var(--color-bg-tertiary);
-  color: var(--color-error);
-}
-
-.history-empty {
-  padding: var(--spacing-lg);
-  text-align: center;
-  font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
-}
-
-.history-loading {
-  padding: var(--spacing-md);
-  text-align: center;
-  font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
-}
-
-.history-new-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--spacing-sm);
-  margin: var(--spacing-sm);
-  padding: var(--spacing-sm) var(--spacing-md);
-  border: 1px dashed var(--color-border);
-  background: transparent;
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-  border-radius: var(--radius-md);
-  transition: all var(--transition-fast);
-}
-
-.history-new-btn:hover {
-  background: var(--color-bg-secondary);
-  color: var(--color-text-primary);
-  border-color: var(--color-accent);
-}
-
-.history-actions-row {
-  display: flex;
-  gap: var(--spacing-xs);
-  padding: 0 var(--spacing-sm) var(--spacing-sm);
-}
-
-.history-action-btn {
-  flex: 1;
-  padding: var(--spacing-xs) var(--spacing-sm);
-  border: 1px solid var(--color-border);
-  background: transparent;
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
-  cursor: pointer;
-  border-radius: var(--radius-sm);
-  transition: all var(--transition-fast);
-  text-align: center;
-}
-
-.history-action-btn:hover {
-  background: var(--color-bg-secondary);
-  color: var(--color-text-primary);
-}
-
-.history-action-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-/* Selection quote popup */
-.selection-quote-popup {
-  position: fixed;
-  z-index: 40;
-  display: flex;
-  gap: var(--spacing-xs);
-  background: var(--color-bg-primary);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-full);
-  padding: var(--spacing-xs) var(--spacing-sm);
-  box-shadow: var(--shadow-md);
-  backdrop-filter: var(--blur-frost);
-}
-
-.selection-quote-popup button {
-  padding: var(--spacing-xs) var(--spacing-sm);
-  border: none;
-  background: transparent;
-  color: var(--color-accent);
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  cursor: pointer;
-  border-radius: var(--radius-full);
-  transition: all var(--transition-fast);
-}
-
-.selection-quote-popup button:hover {
-  background: var(--color-bg-secondary);
+@keyframes overlay-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 /* Browser automation status bar */
@@ -4105,49 +2303,52 @@ onUnmounted(() => {
   color: white;
 }
 
-/* Share page content toggle */
-.share-page-row {
-  display: flex;
-  align-items: center;
-  padding: 0 var(--spacing-sm);
-  margin-bottom: var(--spacing-xs);
-}
-
-.share-page-btn {
+/* Context warning bar */
+.context-warning-bar {
   display: flex;
   align-items: center;
   gap: var(--spacing-xs);
-  padding: var(--spacing-xs) var(--spacing-sm);
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--color-text-secondary);
+  padding: var(--spacing-xs) var(--spacing-md);
+  background: rgba(255, 149, 0, 0.1);
+  border-top: 1px solid rgba(255, 149, 0, 0.2);
   font-size: var(--font-size-xs);
+  color: #ff9500;
+}
+
+/* Selection quote popup */
+.selection-quote-popup {
+  position: fixed;
+  z-index: 40;
+  display: flex;
+  gap: var(--spacing-xs);
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  box-shadow: var(--shadow-md);
+  backdrop-filter: var(--blur-frost);
+  animation: popup-fade-in 150ms ease;
+}
+
+@keyframes popup-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.selection-quote-popup button {
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border: none;
+  background: transparent;
+  color: var(--color-accent);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
   cursor: pointer;
   border-radius: var(--radius-full);
   transition: all var(--transition-fast);
-  max-width: 100%;
 }
 
-.share-page-btn:hover {
+.selection-quote-popup button:hover {
   background: var(--color-bg-secondary);
-  color: var(--color-text-primary);
-}
-
-.share-page-btn.active {
-  background: rgba(0, 122, 255, 0.1);
-  border-color: var(--color-accent);
-  color: var(--color-accent);
-}
-
-.share-page-btn span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.share-page-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 /* Confirmation dialog */
@@ -4163,6 +2364,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
+  animation: overlay-fade 200ms ease;
 }
 
 .confirmation-dialog {
@@ -4172,6 +2374,12 @@ onUnmounted(() => {
   padding: var(--spacing-lg);
   max-width: 360px;
   width: 90%;
+  animation: dialog-scale-in 200ms ease;
+}
+
+@keyframes dialog-scale-in {
+  from { transform: scale(0.95); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
 }
 
 .confirmation-title {
@@ -4246,31 +2454,6 @@ onUnmounted(() => {
   word-break: break-word;
 }
 
-/* History search */
-.history-search-row {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-  padding: var(--spacing-xs) var(--spacing-md);
-  border-bottom: 1px solid var(--color-border);
-  color: var(--color-text-secondary);
-}
-
-.history-search-input {
-  flex: 1;
-  border: none;
-  background: transparent;
-  color: var(--color-text-primary);
-  font-size: var(--font-size-sm);
-  font-family: var(--font-body);
-  outline: none;
-  padding: var(--spacing-xs) 0;
-}
-
-.history-search-input::placeholder {
-  color: var(--color-text-secondary);
-}
-
 /* Image lightbox */
 .lightbox-overlay {
   position: fixed;
@@ -4299,6 +2482,12 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
+  animation: lightbox-scale-in 200ms ease;
+}
+
+@keyframes lightbox-scale-in {
+  from { transform: scale(0.9); }
+  to { transform: scale(1); }
 }
 
 .lightbox-close {
@@ -4344,10 +2533,17 @@ onUnmounted(() => {
   box-shadow: var(--shadow-lg);
   font-size: var(--font-size-sm);
   z-index: 300;
-  animation: toast-in 200ms ease, toast-out 200ms ease 1800ms forwards;
   max-width: 90%;
   text-align: center;
   pointer-events: none;
+}
+
+.toast-enter-active {
+  animation: toast-in 200ms ease;
+}
+
+.toast-leave-active {
+  animation: toast-out 200ms ease;
 }
 
 @keyframes toast-in {
@@ -4358,5 +2554,16 @@ onUnmounted(() => {
 @keyframes toast-out {
   from { opacity: 1; }
   to { opacity: 0; }
+}
+
+/* Theme transition on root variables */
+.sidepanel * {
+  transition-property: background-color, border-color, color, box-shadow;
+  transition-duration: 0ms;
+}
+
+.sidepanel.theme-transitioning * {
+  transition-duration: 500ms;
+  transition-timing-function: ease;
 }
 </style>
