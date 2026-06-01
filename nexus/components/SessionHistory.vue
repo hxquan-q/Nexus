@@ -258,6 +258,7 @@ function cancelRename() {
         <input type="file" accept=".json" style="display: none" @change="(e) => emit('import', e)" />
       </label>
     </div>
+    <div class="history-footer">Nexus v0.2.0</div>
   </div>
 </template>
 
@@ -622,5 +623,13 @@ function cancelRename() {
 .history-action-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+.history-footer {
+  padding: var(--spacing-xs) var(--spacing-md) var(--spacing-sm);
+  text-align: center;
+  font-size: 10px;
+  color: var(--color-text-secondary);
+  opacity: 0.4;
 }
 </style>

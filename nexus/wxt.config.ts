@@ -5,7 +5,7 @@ export default defineConfig({
   manifest: {
     name: 'Nexus',
     description: 'AI-Powered Browser Assistant',
-    version: '0.1.0',
+    version: '0.2.0',
     minimum_chrome_version: '120',
     permissions: [
       'storage',

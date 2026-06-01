@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.2.0] - 2026-06-02
+
+### Added
+- Keyboard shortcut help modal in sidepanel header menu
+- Time-of-day greeting in empty chat state (morning/afternoon/evening/night)
+- Data migration version tracking system (storage schema versioning)
+- Version display in settings page footer and history panel footer
+- i18n support for all new shortcut help modal strings
+- i18n support for time-of-day greeting strings (English + Chinese)
+
+### Changed
+- Improved empty state subtitle to show time-based greeting when provider is configured
+- Memory cleanup: ensured all rAF timers are properly cleared on unmount
+- Memory cleanup: ensured all interval timers are cleared on unmount
+
 ## [0.1.0] - 2026-06-02
 
 ### Added

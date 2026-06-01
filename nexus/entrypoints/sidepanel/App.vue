@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, shallowRef, triggerRef, onMounted, onUnmounted, nextTick, watch, computed } from 'vue';
+import { ref, shallowRef, triggerRef, onMounted, onUnmounted, nextTick, watch, computed, readonly } from 'vue';
 import {
   getAllProviders,
   getActiveProvider,
@@ -20,6 +20,8 @@ import {
   toAIProvider,
   getOnboardingCompleted,
   setOnboardingCompleted,
+  getDataVersion,
+  setDataVersion,
   type StoredProvider,
   type ThemeMode,
 } from '../../utils/storage';
@@ -128,6 +130,7 @@ const selectionQuotePopup = ref({ visible: false, x: 0, y: 0, text: '' });
 
 // Debounced save timer
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
+let autofocusTimer: ReturnType<typeof setTimeout> | null = null;
 const SAVE_DEBOUNCE_MS = 300;
 
 // Last error info for the error display component
@@ -262,6 +265,14 @@ const activeModelName = computed(() => {
 const activeModelSupportsVision = computed(() => {
   if (!activeProvider.value) return false;
   return activeProvider.value.visionModels?.includes(activeProvider.value.selectedModel) ?? false;
+});
+
+const timeGreeting = computed(() => {
+  const hour = new Date().getHours();
+  if (hour >= 6 && hour < 12) return i18n(currentLanguage.value, 'greeting.morning');
+  if (hour >= 12 && hour < 18) return i18n(currentLanguage.value, 'greeting.afternoon');
+  if (hour >= 18 && hour < 24) return i18n(currentLanguage.value, 'greeting.evening');
+  return i18n(currentLanguage.value, 'greeting.night');
 });
 
 const contextBarColor = computed(() => {
@@ -1992,8 +2003,17 @@ onMounted(async () => {
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
 
+    // Data migration: check version and run migrations if needed
+    const currentDataVersion = await getDataVersion();
+    if (currentDataVersion < 2) {
+      // Version 2 migration: set version to 2
+      // Future migrations can be added here
+      await setDataVersion(2);
+    }
+
     // Auto-focus input after short delay
-    setTimeout(() => {
+    autofocusTimer = setTimeout(() => {
+      autofocusTimer = null;
       messageInputRef.value?.focus();
     }, 300);
 
@@ -2009,6 +2029,12 @@ onMounted(async () => {
 onUnmounted(() => {
   chatAbortController.value?.abort();
 
+  // Clear any pending rAF timers
+  if (scrollRafId !== null) {
+    cancelAnimationFrame(scrollRafId);
+    scrollRafId = null;
+  }
+
   browser.runtime.sendMessage({ type: 'STREAM_END' }).catch(() => {});
 
   if (currentSession.value && messages.value.length > 0) {
@@ -2017,6 +2043,10 @@ onUnmounted(() => {
 
   if (saveTimer) clearTimeout(saveTimer);
   if (toastTimer) clearTimeout(toastTimer);
+  if (autofocusTimer) {
+    clearTimeout(autofocusTimer);
+    autofocusTimer = null;
+  }
   clearStreamRenderState();
   // Cleanup network listeners
   const onlineHandler = (window as any).__nexusOnlineHandler;
@@ -2151,7 +2181,7 @@ onUnmounted(() => {
           </div>
           <h2 class="empty-state-title">Nexus</h2>
           <p v-if="!activeProvider" class="empty-state-subtitle">{{ i18n(currentLanguage, 'empty.noProvider') }}</p>
-          <p v-else class="empty-state-subtitle">{{ i18n(currentLanguage, 'empty.subtitle') }}</p>
+          <p v-else class="empty-state-subtitle">{{ timeGreeting }}</p>
           <button v-if="!activeProvider" class="empty-state-cta" @click="openSettings">
             {{ i18n(currentLanguage, 'empty.configure') }}
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

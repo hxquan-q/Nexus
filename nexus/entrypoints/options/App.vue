@@ -1514,6 +1514,11 @@ onMounted(async () => {
         </div>
       </div>
     </main>
+
+    <!-- Footer -->
+    <footer class="options-footer">
+      Nexus v0.2.0
+    </footer>
   </div>
 </template>
 
@@ -2433,5 +2438,13 @@ onMounted(async () => {
 .model-tag-remove:hover {
   opacity: 1;
   color: var(--color-error);
+}
+
+.options-footer {
+  padding: var(--spacing-lg);
+  text-align: center;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  opacity: 0.5;
 }
 </style>

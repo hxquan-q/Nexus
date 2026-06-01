@@ -19,6 +19,7 @@ const emit = defineEmits<{
 
 const isOpen = ref(false);
 const menuRef = ref<HTMLElement | null>(null);
+const showShortcutsModal = ref(false);
 
 function toggleMenu(): void {
   isOpen.value = !isOpen.value;
@@ -32,7 +33,24 @@ function handleItemClick(action: string): void {
     case 'clear': emit('clear-chat'); break;
     case 'popout': emit('pop-out'); break;
     case 'search': emit('search'); break;
+    case 'shortcuts': showShortcutsModal.value = true; break;
   }
+}
+
+const shortcuts = [
+  { key: 'Ctrl+N', labelKey: 'shortcutsModal.newChat' },
+  { key: 'Ctrl+H', labelKey: 'shortcutsModal.toggleHistory' },
+  { key: 'Ctrl+,', labelKey: 'shortcutsModal.openSettings' },
+  { key: 'Ctrl+Shift+C', labelKey: 'shortcutsModal.copyLastResponse' },
+  { key: 'Ctrl+F', labelKey: 'shortcutsModal.searchChat' },
+  { key: 'Escape', labelKey: 'shortcutsModal.escape' },
+  { key: 'Enter', labelKey: 'shortcutsModal.sendMessage' },
+  { key: 'Shift+Enter', labelKey: 'shortcutsModal.newLine' },
+  { key: 'Alt+S', labelKey: 'shortcutsModal.openSidepanel' },
+];
+
+function closeShortcutsModal(): void {
+  showShortcutsModal.value = false;
 }
 
 function handleClickOutside(event: MouseEvent): void {
@@ -94,6 +112,17 @@ onUnmounted(() => {
           </svg>
           <span>{{ i18n(language, 'menu.popOut') }}</span>
         </button>
+        <button class="menu-item" @click="handleItemClick('shortcuts')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="4" width="20" height="16" rx="2"/>
+            <line x1="6" y1="8" x2="6.01" y2="8"/>
+            <line x1="10" y1="8" x2="10.01" y2="8"/>
+            <line x1="14" y1="8" x2="18" y2="8"/>
+            <line x1="6" y1="12" x2="18" y2="12"/>
+            <line x1="8" y1="16" x2="16" y2="16"/>
+          </svg>
+          <span>{{ i18n(language, 'shortcutsModal.title') }}</span>
+        </button>
         <div class="menu-divider"></div>
         <button class="menu-item menu-item-danger" @click="handleItemClick('clear')" :disabled="!hasSession">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -104,6 +133,27 @@ onUnmounted(() => {
         </button>
       </div>
     </Transition>
+
+    <!-- Keyboard Shortcuts Modal -->
+    <div v-if="showShortcutsModal" class="shortcuts-overlay" @click="closeShortcutsModal">
+      <div class="shortcuts-modal" @click.stop>
+        <div class="shortcuts-modal-header">
+          <h3>{{ i18n(language, 'shortcutsModal.title') }}</h3>
+          <button class="shortcuts-modal-close" @click="closeShortcutsModal">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18"/>
+              <line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+        <div class="shortcuts-table">
+          <div v-for="shortcut in shortcuts" :key="shortcut.key" class="shortcut-row">
+            <span class="shortcut-desc">{{ i18n(language, shortcut.labelKey) }}</span>
+            <kbd class="shortcut-key">{{ shortcut.key }}</kbd>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -203,5 +253,108 @@ onUnmounted(() => {
   height: 1px;
   background: var(--color-border);
   margin: var(--spacing-xs) 0;
+}
+
+/* Keyboard Shortcuts Modal */
+.shortcuts-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: var(--color-overlay-heavy);
+  backdrop-filter: var(--blur-frost);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: shortcuts-overlay-in 200ms ease;
+}
+
+@keyframes shortcuts-overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.shortcuts-modal {
+  background: var(--color-bg-primary);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  width: 340px;
+  max-width: 90vw;
+  max-height: 80vh;
+  overflow-y: auto;
+  animation: shortcuts-modal-in 200ms ease;
+}
+
+@keyframes shortcuts-modal-in {
+  from { opacity: 0; transform: scale(0.95) translateY(-8px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.shortcuts-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--spacing-md) var(--spacing-lg);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.shortcuts-modal-header h3 {
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  margin: 0;
+}
+
+.shortcuts-modal-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: all var(--transition-fast);
+}
+
+.shortcuts-modal-close:hover {
+  background: var(--color-bg-secondary);
+  color: var(--color-text-primary);
+}
+
+.shortcuts-table {
+  padding: var(--spacing-sm) var(--spacing-lg) var(--spacing-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.shortcut-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--spacing-xs) 0;
+}
+
+.shortcut-desc {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.shortcut-key {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-xs);
+  font-family: var(--font-mono);
+  line-height: 1.4;
+  white-space: nowrap;
 }
 </style>

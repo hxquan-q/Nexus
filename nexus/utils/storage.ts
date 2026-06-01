@@ -420,3 +420,19 @@ export function toAIProvider(stored: StoredProvider): AIProvider {
 export function isVisionSupportedForModel(provider: StoredProvider, model: string): boolean {
   return provider.visionModels?.includes(model) ?? false;
 }
+
+// ============================================================
+// Data version tracking (for future schema migrations)
+// ============================================================
+
+const dataVersionStorage = storage.defineItem<number>('local:dataVersion', {
+  fallback: 1,
+});
+
+export async function getDataVersion(): Promise<number> {
+  return await dataVersionStorage.getValue();
+}
+
+export async function setDataVersion(v: number): Promise<void> {
+  await dataVersionStorage.setValue(v);
+}

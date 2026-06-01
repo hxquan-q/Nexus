@@ -400,6 +400,27 @@ const translations: Record<Language, Record<TranslationKey, string>> = {
 
     // ===== Pop Out =====
     'popOut.title': 'Nexus Chat',
+
+    // ===== Keyboard Shortcuts Modal =====
+    'shortcutsModal.title': 'Keyboard Shortcuts',
+    'shortcutsModal.newChat': 'New chat',
+    'shortcutsModal.toggleHistory': 'Toggle history',
+    'shortcutsModal.openSettings': 'Open settings',
+    'shortcutsModal.copyLastResponse': 'Copy last response',
+    'shortcutsModal.searchChat': 'Search in conversation',
+    'shortcutsModal.escape': 'Close / Cancel',
+    'shortcutsModal.sendMessage': 'Send message',
+    'shortcutsModal.newLine': 'New line',
+    'shortcutsModal.openSidepanel': 'Open sidepanel (global)',
+
+    // ===== Time Greeting =====
+    'greeting.morning': 'Good morning! How can I help?',
+    'greeting.afternoon': 'Good afternoon! What\'s on your mind?',
+    'greeting.evening': 'Good evening! Need any help?',
+    'greeting.night': 'Burning the midnight oil? I\'m here to help!',
+
+    // ===== Version =====
+    'version.display': 'Nexus v{version}',
   },
 
   'zh-CN': {
@@ -793,6 +814,27 @@ const translations: Record<Language, Record<TranslationKey, string>> = {
 
     // ===== Pop Out =====
     'popOut.title': 'Nexus 对话',
+
+    // ===== Keyboard Shortcuts Modal =====
+    'shortcutsModal.title': '键盘快捷键',
+    'shortcutsModal.newChat': '新对话',
+    'shortcutsModal.toggleHistory': '切换历史记录',
+    'shortcutsModal.openSettings': '打开设置',
+    'shortcutsModal.copyLastResponse': '复制最后一条回复',
+    'shortcutsModal.searchChat': '在对话中搜索',
+    'shortcutsModal.escape': '关闭 / 取消',
+    'shortcutsModal.sendMessage': '发送消息',
+    'shortcutsModal.newLine': '换行',
+    'shortcutsModal.openSidepanel': '打开侧边栏（全局）',
+
+    // ===== Time Greeting =====
+    'greeting.morning': '早上好！有什么可以帮你的？',
+    'greeting.afternoon': '下午好！在想什么？',
+    'greeting.evening': '晚上好！需要帮助吗？',
+    'greeting.night': '夜深了，我还在！有什么需要？',
+
+    // ===== Version =====
+    'version.display': 'Nexus v{version}',
   },
 };
 
